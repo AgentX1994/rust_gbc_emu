@@ -1,0 +1,5 @@
+- add display
+- ensure MBC support is good enough
+- implement interrupts
+- implement MMIO stuff
+- implement DMA

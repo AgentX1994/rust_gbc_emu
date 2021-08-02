@@ -2,6 +2,7 @@ use std::convert::TryInto;
 
 use super::cartridge::Cartridge;
 use super::mmio::Mmio;
+use super::ppu::PictureProcessingUnit;
 
 enum MemoryRegion {
     CartridgeBank0(u16),
@@ -38,6 +39,7 @@ impl From<u16> for MemoryRegion {
 pub struct MemoryBus {
     pub cartridge: Cartridge,
     pub ram: [u8; 8192],
+    pub ppu: PictureProcessingUnit,
     pub mmio: Mmio,
     pub high_ram: [u8; 126],
     pub interrupt_master_enable: u8,
@@ -48,10 +50,15 @@ impl MemoryBus {
         MemoryBus {
             cartridge,
             ram: [0; 8192],
+            ppu: PictureProcessingUnit::default(),
             mmio: Mmio::default(),
             high_ram: [0; 126],
             interrupt_master_enable: 0,
         }
+    }
+
+    pub fn get_cartridge(&self) -> &Cartridge {
+        &self.cartridge
     }
 
     pub fn read_u8(&self, address: u16) -> u8 {
@@ -61,10 +68,10 @@ impl MemoryBus {
             MemoryRegion::CartridgeBankSelectable(offset) => {
                 self.cartridge.read_rom_selected_bank(offset)
             }
-            MemoryRegion::VideoRam(offset) => todo!(),
+            MemoryRegion::VideoRam(offset) => self.ppu.read_video_ram(offset),
             MemoryRegion::ExternalRam(offset) => self.cartridge.read_from_external_ram(offset),
             MemoryRegion::WorkRam(offset) => self.ram[offset as usize],
-            MemoryRegion::ObjectAttributeMemory(offset) => todo!(),
+            MemoryRegion::ObjectAttributeMemory(offset) => self.ppu.read_object_attribute_memory(offset),
             MemoryRegion::Unused => {
                 // Use Color Game Boy Revision E behavior I guess?
                 let second_nibble = ((address >> 4) & 0xf) as u8;
@@ -100,12 +107,12 @@ impl MemoryBus {
     pub fn write_u8(&mut self, address: u16, byte: u8) {
         let region = MemoryRegion::from(address);
         match region {
-            MemoryRegion::CartridgeBank0(offset) => todo!(),
-            MemoryRegion::CartridgeBankSelectable(offset) => todo!(),
-            MemoryRegion::VideoRam(offset) => todo!(),
+            MemoryRegion::CartridgeBank0(offset) => self.cartridge.write_rom_bank_0(offset, byte),
+            MemoryRegion::CartridgeBankSelectable(offset) => self.cartridge.write_rom_selected_bank(offset, byte),
+            MemoryRegion::VideoRam(offset) => self.ppu.write_video_ram(offset, byte),
             MemoryRegion::ExternalRam(offset) => self.cartridge.write_to_external_ram(offset, byte),
             MemoryRegion::WorkRam(offset) => self.ram[offset as usize] = byte,
-            MemoryRegion::ObjectAttributeMemory(offset) => todo!(),
+            MemoryRegion::ObjectAttributeMemory(offset) => self.ppu.write_object_attribute_memory(offset, byte),
             MemoryRegion::Unused => todo!(),
             MemoryRegion::Mmio(offset) => self.mmio.write_u8(offset, byte),
             MemoryRegion::HighRam(offset) => self.high_ram[offset as usize] = byte,

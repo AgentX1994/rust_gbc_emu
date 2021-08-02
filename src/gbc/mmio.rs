@@ -81,11 +81,11 @@ pub struct Mmio {
 }
 
 impl Mmio {
-    pub fn read_u8(&self, address: u16) -> u8 {
+    pub fn read_u8(&self, _address: u16) -> u8 {
         0
     }
 
-    pub fn write_u8(&mut self, address: u16, byte: u8) {
+    pub fn write_u8(&mut self, _address: u16, _byte: u8) {
         return;
     }
 }

@@ -219,13 +219,15 @@ impl Debugger {
                             }
                         }
                         "disassemble" | "dis" | "disass" | "u" => {
-                            let address = if tokens.len() > 1 {match parse_u16_hex(tokens[1].as_str()) {
-                                Ok(address) => Some(address),
-                                Err(e) => {
-                                    println!("Error: invalid address: {}", e);
-                                    continue;
+                            let address = if tokens.len() > 1 {
+                                match parse_u16_hex(tokens[1].as_str()) {
+                                    Ok(address) => Some(address),
+                                    Err(e) => {
+                                        println!("Error: invalid address: {}", e);
+                                        continue;
+                                    }
                                 }
-                            }} else {
+                            } else {
                                 None
                             };
                             let length = if tokens.len() > 2 {
@@ -241,6 +243,43 @@ impl Debugger {
                             };
 
                             self.gbc.print_instructions(address, length);
+                        }
+                        "header" => {
+                            let cart = self.gbc.get_cartridge();
+                            println!("Cartridge: {}", cart.title);
+                            println!("\tManufacturer Code: {:?}", cart.manufacturer_code);
+                            println!(
+                                "\tLicensee Code: {} {}",
+                                cart.licensee_code[0] as char, cart.licensee_code[1] as char
+                            );
+                            println!("\tCartridge Type: {:?}", cart.cartridge_type);
+                            println!("\tColor Support: {:?}", cart.color_support);
+                            println!("\tSGB Support: {}", cart.supports_sgb);
+                            println!(
+                                "\tROM Size: {} ({} banks)",
+                                cart.rom_size,
+                                cart.rom_size / 16384
+                            );
+                            println!(
+                                "\tRAM Size: {} ({} banks)",
+                                cart.ram_size,
+                                cart.ram_size / 8192
+                            );
+                            println!("\tIs Japanese: {}", cart.is_japanese);
+                            println!("\tROM Version: {}", cart.rom_version);
+                            println!(
+                                "\tExternal RAM currently enabled: {}",
+                                cart.enable_external_ram
+                            );
+                            println!("\tCurrently selected ROM bank: {}", cart.rom_bank_selected);
+                            println!(
+                                "\tCurrent banking mode: {}",
+                                if cart.advanced_banking_mode {
+                                    "advanced"
+                                } else {
+                                    "basic"
+                                }
+                            );
                         }
                         _ => println!("Unknown command {}", tokens[0]),
                     }

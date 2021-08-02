@@ -1,9 +1,4 @@
-use std::{
-    convert::{TryFrom, TryInto},
-    fs::File,
-    io::{self, Read},
-    path::{Path, PathBuf},
-};
+use std::{convert::{TryFrom, TryInto}, fs::File, io::{self, Read}, path::{Path, PathBuf}};
 
 const NINTENDO_LOGO_BYTES: [u8; 0x30] = [
     0xce, 0xed, 0x66, 0x66, 0xcc, 0x0d, 0x00, 0x0b, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0c, 0x00, 0x0d,
@@ -155,6 +150,9 @@ pub struct Cartridge {
     pub header_checksum: u8,
     pub global_checksum: u16,
     pub ram: Vec<u8>,
+    pub enable_external_ram: bool,
+    pub rom_bank_selected: u8,
+    pub advanced_banking_mode: bool,
 }
 
 impl Cartridge {
@@ -261,12 +259,35 @@ impl Cartridge {
             header_checksum,
             global_checksum,
             ram: vec![0; ram_size as usize],
+            enable_external_ram: false,
+            rom_bank_selected: 1,
+            advanced_banking_mode: false,
         })
     }
 
     pub fn read_rom_bank_0(&self, offset: u16) -> u8 {
         assert!(offset < 16384);
         self.rom[offset as usize]
+    }
+
+    pub fn write_rom_bank_0(&mut self, offset: u16, byte: u8) {
+        match offset {
+            0x0000..=0x1fff => {
+                // external ram enable
+                self.enable_external_ram = (byte & 0xf) == 0x0a;
+            }
+            0x2000..=0x3fff => {
+                // rom bank switch
+                // TODO Check MBC implementation
+                self.rom_bank_selected = byte & 0x1f;
+                if self.rom_bank_selected == 0 {
+                    self.rom_bank_selected = 1; // Don't select bank 0 again
+                }
+                let available_banks = (self.rom_size / 16384) as u8;
+                self.rom_bank_selected &= available_banks - 1;
+            }
+            _ => unreachable!()
+        }
     }
 
     pub fn read_rom_selected_bank(&self, offset: u16) -> u8 {
@@ -276,7 +297,28 @@ impl Cartridge {
         self.rom[address as usize]
     }
 
+    pub fn write_rom_selected_bank(&mut self, offset: u16, byte: u8) {
+        match offset {
+            0x0000..=0x1fff => {
+                if !self.advanced_banking_mode {
+                    self.rom_bank_selected = ((byte & 0x3) << 5) | (self.rom_bank_selected | 0x1f);
+                    let available_banks = (self.rom_size / 16384) as u8;
+                    self.rom_bank_selected &= available_banks - 1;
+                } else {
+                    todo!()
+                }
+            }
+            0x2000..=0x3fff => {
+                self.advanced_banking_mode = (byte & 1) != 0;
+            }
+            _ => unreachable!()
+        }
+    }
+
     pub fn read_from_external_ram(&self, offset: u16) -> u8 {
+        if !self.enable_external_ram {
+            return 0xff;
+        }
         if (offset as usize) < self.ram.len() {
             self.ram[offset as usize]
         } else {
@@ -285,8 +327,10 @@ impl Cartridge {
     }
 
     pub fn write_to_external_ram(&mut self, offset: u16, v: u8) {
-        if (offset as usize) < self.ram.len() {
-            self.ram[offset as usize] = v;
+        if self.enable_external_ram {
+            if (offset as usize) < self.ram.len() {
+                self.ram[offset as usize] = v;
+            }
         }
     }
 }

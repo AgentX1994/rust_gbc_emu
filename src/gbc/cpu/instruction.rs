@@ -244,73 +244,75 @@ pub enum Opcode {
     Ei,
 }
 
-impl Display for Opcode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Opcode {
+    fn print(&self, address: u16) -> String {
         match self {
-            Opcode::Unknown => write!(f, "Unknown"),
-            Opcode::Nop => write!(f, "nop"),
-            Opcode::Stop => write!(f, "stop"),
-            Opcode::Halt => write!(f, "halt"),
+            Opcode::Unknown => format!("Unknown"),
+            Opcode::Nop => format!("nop"),
+            Opcode::Stop => format!("stop"),
+            Opcode::Halt => format!("halt"),
             Opcode::Ld8 {
                 destination,
                 source,
-            } => write!(f, "ld {} {}", destination, source),
+            } => format!("ld {} {}", destination, source),
             Opcode::Ld16 {
                 destination,
                 source,
-            } => write!(f, "ld {} {}", destination, source),
-            Opcode::Jp { destination } => write!(f, "jp {}", destination),
+            } => format!("ld {} {}", destination, source),
+            Opcode::Jp { destination } => format!("jp {}", destination),
             Opcode::JpCond {
                 condition,
                 destination,
-            } => write!(f, "jp {},{:#x}", condition, destination),
-            Opcode::Jr { offset } => write!(f, "jr {:#x}", offset),
-            Opcode::JrCond { condition, offset } => write!(f, "jr {},{}", condition, offset),
-            Opcode::Call { destination } => write!(f, "call {:#x}", destination),
+            } => format!("jp {},{:#x}", condition, destination),
+            Opcode::Jr { offset } => format!("jr {:#x}", address as i32 + *offset as i32),
+            Opcode::JrCond { condition, offset } => {
+                format!("jr {},{:#x}", condition, address as i32 + *offset as i32)
+            }
+            Opcode::Call { destination } => format!("call {:#x}", destination),
             Opcode::CallCond {
                 condition,
                 destination,
-            } => write!(f, "call {},{:#x}", condition, destination),
-            Opcode::Ret => write!(f, "ret"),
-            Opcode::RetCond { condition } => write!(f, "ret {}", condition),
-            Opcode::Reti => write!(f, "reti"),
-            Opcode::Pop { register } => write!(f, "pop {}", register),
-            Opcode::Push { register } => write!(f, "push {}", register),
-            Opcode::Rst { vector } => write!(f, "rst {:#x}", vector),
-            Opcode::Bit { bit, destination } => write!(f, "bit {},{}", bit, destination),
-            Opcode::Res { bit, destination } => write!(f, "res {},{}", bit, destination),
-            Opcode::Set { bit, destination } => write!(f, "set {},{}", bit, destination),
-            Opcode::Add8 { operand } => write!(f, "add A,{}", operand),
-            Opcode::Add16 { register, operand } => write!(f, "add {},{}", register, operand),
-            Opcode::Inc { operand } => write!(f, "inc {}", operand),
-            Opcode::Inc16 { register } => write!(f, "inc {}", register),
-            Opcode::Dec { operand } => write!(f, "dec {}", operand),
-            Opcode::Dec16 { register } => write!(f, "dec {}", register),
-            Opcode::Adc { operand } => write!(f, "adc A,{}", operand),
-            Opcode::Sub { operand } => write!(f, "sub {}", operand),
-            Opcode::Sbc { operand } => write!(f, "sbc A,{}", operand),
-            Opcode::And { operand } => write!(f, "and {}", operand),
-            Opcode::Xor { operand } => write!(f, "xor {}", operand),
-            Opcode::Or { operand } => write!(f, "or {}", operand),
-            Opcode::Cp { operand } => write!(f, "cp {}", operand),
-            Opcode::Cpl => write!(f, "cpl"),
-            Opcode::Daa => write!(f, "daa"),
-            Opcode::Rlca => write!(f, "rlca"),
-            Opcode::Rla => write!(f, "rla"),
-            Opcode::Rrca => write!(f, "rrca"),
-            Opcode::Rra => write!(f, "rra"),
-            Opcode::Rlc { operand: register } => write!(f, "rlc {}", register),
-            Opcode::Rl { operand: register } => write!(f, "rl {}", register),
-            Opcode::Rrc { operand: register } => write!(f, "rrc {}", register),
-            Opcode::Rr { operand: register } => write!(f, "rr {}", register),
-            Opcode::Sla { operand: register } => write!(f, "sla {}", register),
-            Opcode::Swap { operand: register } => write!(f, "swap {}", register),
-            Opcode::Sra { operand: register } => write!(f, "sra {}", register),
-            Opcode::Srl { operand: register } => write!(f, "Srl {}", register),
-            Opcode::Scf => write!(f, "scf"),
-            Opcode::Ccf => write!(f, "ccf"),
-            Opcode::Di => write!(f, "di"),
-            Opcode::Ei => write!(f, "ei"),
+            } => format!("call {},{:#x}", condition, destination),
+            Opcode::Ret => format!("ret"),
+            Opcode::RetCond { condition } => format!("ret {}", condition),
+            Opcode::Reti => format!("reti"),
+            Opcode::Pop { register } => format!("pop {}", register),
+            Opcode::Push { register } => format!("push {}", register),
+            Opcode::Rst { vector } => format!("rst {:#x}", vector),
+            Opcode::Bit { bit, destination } => format!("bit {},{}", bit, destination),
+            Opcode::Res { bit, destination } => format!("res {},{}", bit, destination),
+            Opcode::Set { bit, destination } => format!("set {},{}", bit, destination),
+            Opcode::Add8 { operand } => format!("add A,{}", operand),
+            Opcode::Add16 { register, operand } => format!("add {},{}", register, operand),
+            Opcode::Inc { operand } => format!("inc {}", operand),
+            Opcode::Inc16 { register } => format!("inc {}", register),
+            Opcode::Dec { operand } => format!("dec {}", operand),
+            Opcode::Dec16 { register } => format!("dec {}", register),
+            Opcode::Adc { operand } => format!("adc A,{}", operand),
+            Opcode::Sub { operand } => format!("sub {}", operand),
+            Opcode::Sbc { operand } => format!("sbc A,{}", operand),
+            Opcode::And { operand } => format!("and {}", operand),
+            Opcode::Xor { operand } => format!("xor {}", operand),
+            Opcode::Or { operand } => format!("or {}", operand),
+            Opcode::Cp { operand } => format!("cp {}", operand),
+            Opcode::Cpl => format!("cpl"),
+            Opcode::Daa => format!("daa"),
+            Opcode::Rlca => format!("rlca"),
+            Opcode::Rla => format!("rla"),
+            Opcode::Rrca => format!("rrca"),
+            Opcode::Rra => format!("rra"),
+            Opcode::Rlc { operand: register } => format!("rlc {}", register),
+            Opcode::Rl { operand: register } => format!("rl {}", register),
+            Opcode::Rrc { operand: register } => format!("rrc {}", register),
+            Opcode::Rr { operand: register } => format!("rr {}", register),
+            Opcode::Sla { operand: register } => format!("sla {}", register),
+            Opcode::Swap { operand: register } => format!("swap {}", register),
+            Opcode::Sra { operand: register } => format!("sra {}", register),
+            Opcode::Srl { operand: register } => format!("Srl {}", register),
+            Opcode::Scf => format!("scf"),
+            Opcode::Ccf => format!("ccf"),
+            Opcode::Di => format!("di"),
+            Opcode::Ei => format!("ei"),
         }
     }
 }
@@ -324,7 +326,7 @@ fn make_i8(v: u8) -> i8 {
 }
 
 fn make_cond(byte: u8) -> ConditionType {
-    let v = (byte >> 3) & 0b111;
+    let v = (byte >> 3) & 0b11;
     match v {
         0 => ConditionType::NonZero,
         1 => ConditionType::Zero,
@@ -959,42 +961,42 @@ impl Instruction {
                 0 => Instruction {
                     address,
                     op: Opcode::Add8 { operand },
-                    size: 1,
+                    size: 2,
                 },
                 1 => Instruction {
                     address,
                     op: Opcode::Adc { operand },
-                    size: 1,
+                    size: 2,
                 },
                 2 => Instruction {
                     address,
                     op: Opcode::Sub { operand },
-                    size: 1,
+                    size: 2,
                 },
                 3 => Instruction {
                     address,
                     op: Opcode::Sbc { operand },
-                    size: 1,
+                    size: 2,
                 },
                 4 => Instruction {
                     address,
                     op: Opcode::And { operand },
-                    size: 1,
+                    size: 2,
                 },
                 5 => Instruction {
                     address,
                     op: Opcode::Xor { operand },
-                    size: 1,
+                    size: 2,
                 },
                 6 => Instruction {
                     address,
                     op: Opcode::Or { operand },
-                    size: 1,
+                    size: 2,
                 },
                 7 => Instruction {
                     address,
                     op: Opcode::Cp { operand },
-                    size: 1,
+                    size: 2,
                 },
                 _ => unreachable!(),
             };
@@ -1022,7 +1024,9 @@ impl Display for Instruction {
         write!(
             f,
             "0x{:04x} - {} (size = {})",
-            self.address, self.op, self.size
+            self.address,
+            self.op.print(self.address + self.size as u16),
+            self.size
         )
     }
 }

@@ -586,7 +586,7 @@ impl Cpu {
             Opcode::Sub { operand } => {
                 let (v, cycles) = self.extract_u8_arithmetic_operand(memory_bus, operand);
 
-                self.add8_with_carry(!v + 1, false, true);
+                self.add8_with_carry((!v).wrapping_add(1), false, true);
                 cycles
             }
             Opcode::Sbc { operand } => {
@@ -1124,6 +1124,7 @@ impl Cpu {
         self.set_flags(self.get_flags() | ZERO_BIT_MASK);
     }
 
+    #[allow(dead_code)]
     fn set_subtraction_flag(&mut self) {
         self.set_flags(self.get_flags() | SUBTRACTION_BIT_MASK);
     }
@@ -1160,6 +1161,7 @@ impl Cpu {
         }
     }
 
+    #[allow(dead_code)]
     fn set_subtraction_flag_from_bool(&mut self, subtraction: bool) {
         if subtraction {
             self.set_subtraction_flag()
@@ -1168,6 +1170,7 @@ impl Cpu {
         }
     }
 
+    #[allow(dead_code)]
     fn set_half_carry_flag_from_bool(&mut self, half_carry: bool) {
         if half_carry {
             self.set_half_carry_flag()
@@ -1245,6 +1248,7 @@ impl Cpu {
         }
     }
 
+    #[allow(dead_code)]
     fn get_r16_mut(&mut self, register: &Register) -> &mut u16 {
         match register {
             Register::Bc => self.bc.get_u16_mut(),

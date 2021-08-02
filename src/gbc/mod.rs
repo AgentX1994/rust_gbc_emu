@@ -6,6 +6,8 @@ pub mod mmio;
 pub mod ppu;
 
 use std::cmp::min;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{io, path::Path};
 
 use cartridge::Cartridge;
@@ -22,11 +24,17 @@ pub struct Gbc {
     cycle_count: u64,
     breakpoints: Vec<Breakpoint>,
     break_reason: Option<BreakReason>,
+    interrupted: Arc<AtomicBool>
 }
 
 impl Gbc {
     pub fn new<P: AsRef<Path>>(rom_path: P) -> io::Result<Self> {
         let cartridge = Cartridge::new(rom_path)?;
+        let interrupted = Arc::new(AtomicBool::new(false));
+        let i = interrupted.clone();
+        ctrlc::set_handler(move || {
+            i.store(true, Ordering::SeqCst);
+        }).expect("Error setting Ctrl-C handler");
         Ok(Gbc {
             running: false,
             memory_bus: MemoryBus::new(cartridge),
@@ -34,6 +42,7 @@ impl Gbc {
             cycle_count: 0,
             breakpoints: Vec::new(),
             break_reason: None,
+            interrupted,
         })
     }
 
@@ -83,15 +92,16 @@ impl Gbc {
     }
 
     pub fn run(&mut self) {
+        // clear any previous interrupts
+        self.interrupted.store(false, Ordering::SeqCst);
         self.running = true;
         while self.running {
             self.single_step();
-
-            if self.cycle_count > 100 {
-                break;
-            }
-
             self.check_execute_breakpoints();
+            if self.interrupted.load(Ordering::SeqCst) {
+                self.running = false;
+                println!();
+            }
         }
     }
 
@@ -190,5 +200,9 @@ impl Gbc {
 
     pub fn read_memory(&self, address: u16, length: u16) -> Vec<u8> {
         self.memory_bus.read_mem(address, length)
+    }
+
+    pub fn get_cartridge(&self) -> &Cartridge {
+        self.memory_bus.get_cartridge()
     }
 }
