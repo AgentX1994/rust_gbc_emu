@@ -38,6 +38,12 @@ pub enum CartridgeType {
     Huc1RamBattery = 0xff,
 }
 
+impl Default for CartridgeType {
+    fn default() -> Self {
+        CartridgeType::Rom
+    }
+}
+
 impl CartridgeType {
     fn mbc_type(&self) -> u8 {
         match self {
@@ -133,7 +139,13 @@ pub enum GameBoyColorSupport {
     OnlyColor
 }
 
-#[derive(Debug)]
+impl Default for GameBoyColorSupport {
+    fn default() -> Self {
+        Self::NoColorSupport
+    }
+}
+
+#[derive(Debug, Default)]
 pub struct Cartridge {
     pub rom_path: PathBuf,
     pub rom: Vec<u8>,
@@ -185,7 +197,7 @@ impl Cartridge {
                 GameBoyColorSupport::SupportsColor
             };
             // Not sure how to tell whether the title is 11 or 15 bytes...
-            manufacturer_code = header[0x3f..0x42]
+            manufacturer_code = header[0x3f..0x43]
                 .try_into()
                 .expect("slice with incorrect length");
             title = String::from_utf8_lossy(&header[0x34..0x43]).into();

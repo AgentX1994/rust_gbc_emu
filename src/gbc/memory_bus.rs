@@ -1,4 +1,7 @@
+//use std::borrow::Borrow;
+use std::cell::RefCell;
 use std::convert::TryInto;
+use std::rc::Rc;
 
 use super::cartridge::Cartridge;
 use super::mmio::Mmio;
@@ -37,49 +40,56 @@ impl From<u16> for MemoryRegion {
 
 #[derive(Debug)]
 pub struct MemoryBus {
-    pub cartridge: Cartridge,
-    pub ram: [u8; 8192],
-    pub ppu: PictureProcessingUnit,
-    pub mmio: Mmio,
-    pub high_ram: [u8; 126],
-    pub interrupt_master_enable: u8,
+    pub cartridge: Rc<RefCell<Cartridge>>,
+    pub ram: Rc<RefCell<[u8; 8192]>>,
+    pub ppu: Rc<RefCell<PictureProcessingUnit>>,
+    pub mmio: Rc<RefCell<Mmio>>,
+    pub high_ram: Rc<RefCell<[u8; 126]>>,
+    pub interrupt_master_enable: Rc<RefCell<bool>>,
 }
 
 impl MemoryBus {
-    pub fn new(cartridge: Cartridge) -> Self {
+    pub fn new(
+        cartridge: Rc<RefCell<Cartridge>>,
+        ram: Rc<RefCell<[u8; 8192]>>,
+        ppu: Rc<RefCell<PictureProcessingUnit>>,
+        mmio: Rc<RefCell<Mmio>>,
+        high_ram: Rc<RefCell<[u8; 126]>>,
+        interrupt_master_enable: Rc<RefCell<bool>>,
+    ) -> Self {
         MemoryBus {
             cartridge,
-            ram: [0; 8192],
-            ppu: PictureProcessingUnit::default(),
-            mmio: Mmio::default(),
-            high_ram: [0; 126],
-            interrupt_master_enable: 0,
+            ram,
+            ppu,
+            mmio,
+            high_ram,
+            interrupt_master_enable,
         }
-    }
-
-    pub fn get_cartridge(&self) -> &Cartridge {
-        &self.cartridge
     }
 
     pub fn read_u8(&self, address: u16) -> u8 {
         let region = MemoryRegion::from(address);
         match region {
-            MemoryRegion::CartridgeBank0(offset) => self.cartridge.read_rom_bank_0(offset),
+            MemoryRegion::CartridgeBank0(offset) => self.cartridge.borrow().read_rom_bank_0(offset),
             MemoryRegion::CartridgeBankSelectable(offset) => {
-                self.cartridge.read_rom_selected_bank(offset)
+                self.cartridge.borrow().read_rom_selected_bank(offset)
             }
-            MemoryRegion::VideoRam(offset) => self.ppu.read_video_ram(offset),
-            MemoryRegion::ExternalRam(offset) => self.cartridge.read_from_external_ram(offset),
-            MemoryRegion::WorkRam(offset) => self.ram[offset as usize],
-            MemoryRegion::ObjectAttributeMemory(offset) => self.ppu.read_object_attribute_memory(offset),
+            MemoryRegion::VideoRam(offset) => self.ppu.borrow().read_video_ram(offset),
+            MemoryRegion::ExternalRam(offset) => {
+                self.cartridge.borrow().read_from_external_ram(offset)
+            }
+            MemoryRegion::WorkRam(offset) => self.ram.borrow()[offset as usize],
+            MemoryRegion::ObjectAttributeMemory(offset) => {
+                self.ppu.borrow().read_object_attribute_memory(offset)
+            }
             MemoryRegion::Unused => {
                 // Use Color Game Boy Revision E behavior I guess?
                 let second_nibble = ((address >> 4) & 0xf) as u8;
                 (second_nibble << 4) | second_nibble
             }
-            MemoryRegion::Mmio(offset) => self.mmio.read_u8(offset),
-            MemoryRegion::HighRam(offset) => self.high_ram[offset as usize],
-            MemoryRegion::InterruptMasterEnable => self.interrupt_master_enable,
+            MemoryRegion::Mmio(offset) => self.mmio.borrow().read_u8(offset),
+            MemoryRegion::HighRam(offset) => self.high_ram.borrow()[offset as usize],
+            MemoryRegion::InterruptMasterEnable => *self.interrupt_master_enable.borrow() as u8,
         }
     }
 
@@ -107,16 +117,29 @@ impl MemoryBus {
     pub fn write_u8(&mut self, address: u16, byte: u8) {
         let region = MemoryRegion::from(address);
         match region {
-            MemoryRegion::CartridgeBank0(offset) => self.cartridge.write_rom_bank_0(offset, byte),
-            MemoryRegion::CartridgeBankSelectable(offset) => self.cartridge.write_rom_selected_bank(offset, byte),
-            MemoryRegion::VideoRam(offset) => self.ppu.write_video_ram(offset, byte),
-            MemoryRegion::ExternalRam(offset) => self.cartridge.write_to_external_ram(offset, byte),
-            MemoryRegion::WorkRam(offset) => self.ram[offset as usize] = byte,
-            MemoryRegion::ObjectAttributeMemory(offset) => self.ppu.write_object_attribute_memory(offset, byte),
+            MemoryRegion::CartridgeBank0(offset) => {
+                self.cartridge.borrow_mut().write_rom_bank_0(offset, byte)
+            }
+            MemoryRegion::CartridgeBankSelectable(offset) => self
+                .cartridge
+                .borrow_mut()
+                .write_rom_selected_bank(offset, byte),
+            MemoryRegion::VideoRam(offset) => self.ppu.borrow_mut().write_video_ram(offset, byte),
+            MemoryRegion::ExternalRam(offset) => self
+                .cartridge
+                .borrow_mut()
+                .write_to_external_ram(offset, byte),
+            MemoryRegion::WorkRam(offset) => self.ram.borrow_mut()[offset as usize] = byte,
+            MemoryRegion::ObjectAttributeMemory(offset) => self
+                .ppu
+                .borrow_mut()
+                .write_object_attribute_memory(offset, byte),
             MemoryRegion::Unused => todo!(),
-            MemoryRegion::Mmio(offset) => self.mmio.write_u8(offset, byte),
-            MemoryRegion::HighRam(offset) => self.high_ram[offset as usize] = byte,
-            MemoryRegion::InterruptMasterEnable => self.interrupt_master_enable = byte,
+            MemoryRegion::Mmio(offset) => self.mmio.borrow_mut().write_u8(offset, byte),
+            MemoryRegion::HighRam(offset) => self.high_ram.borrow_mut()[offset as usize] = byte,
+            MemoryRegion::InterruptMasterEnable => {
+                *self.interrupt_master_enable.borrow_mut() = byte != 0
+            }
         }
     }
 

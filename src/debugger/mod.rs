@@ -174,6 +174,7 @@ impl Debugger {
                         "s" | "step" | "n" | "next" => {
                             self.gbc.single_step();
                             self.gbc.print_next_instruction();
+                            self.gbc.dump_cpu_state();
                         }
                         "p" | "print" | "read" | "readmem" => {
                             if tokens.len() < 2 {
@@ -245,7 +246,8 @@ impl Debugger {
                             self.gbc.print_instructions(address, length);
                         }
                         "header" => {
-                            let cart = self.gbc.get_cartridge();
+                            let cart_rc = self.gbc.get_cartridge();
+                            let cart = cart_rc.borrow();
                             println!("Cartridge: {}", cart.title);
                             println!("\tManufacturer Code: {:?}", cart.manufacturer_code);
                             println!(

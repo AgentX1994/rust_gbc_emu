@@ -99,21 +99,21 @@ impl Default for VideoRam {
 impl VideoRam {
     fn read(&self, offset: u16) -> u8 {
         match offset {
-            0..=0x87ff => self.tile_block_0[(offset / 16) as usize].lines[(offset % 16) as usize],
-            0x8800..=0x8fff => {
-                let offset = offset - 0x8800;
+            0..=0x07ff => self.tile_block_0[(offset / 16) as usize].lines[(offset % 16) as usize],
+            0x0800..=0x0fff => {
+                let offset = offset - 0x0800;
                 self.tile_block_1[(offset / 16) as usize].lines[(offset % 16) as usize]
             }
-            0x9000..=0x97ff => {
-                let offset = offset - 0x8800;
+            0x1000..=0x17ff => {
+                let offset = offset - 0x1000;
                 self.tile_block_2[(offset / 16) as usize].lines[(offset % 16) as usize]
             }
-            0x9800..=0x9bff => {
-                let offset = offset - 0x9800;
+            0x1800..=0x1bff => {
+                let offset = offset - 0x1800;
                 self.background_map_0[offset as usize]
             }
-            0x9c00..=0x9fff => {
-                let offset = offset - 0x9c00;
+            0x1c00..=0x1fff => {
+                let offset = offset - 0x1c00;
                 self.background_map_1[offset as usize]
             }
             _ => unreachable!(),
@@ -122,23 +122,23 @@ impl VideoRam {
 
     fn write(&mut self, offset: u16, byte: u8) {
         match offset {
-            0..=0x87ff => {
+            0..=0x07ff => {
                 self.tile_block_0[(offset / 16) as usize].lines[(offset % 16) as usize] = byte
             }
-            0x8800..=0x8fff => {
-                let offset = offset - 0x8800;
+            0x0800..=0x0fff => {
+                let offset = offset - 0x0800;
                 self.tile_block_1[(offset / 16) as usize].lines[(offset % 16) as usize] = byte;
             }
-            0x9000..=0x97ff => {
-                let offset = offset - 0x8800;
+            0x1000..=0x17ff => {
+                let offset = offset - 0x1000;
                 self.tile_block_2[(offset / 16) as usize].lines[(offset % 16) as usize] = byte;
             }
-            0x9800..=0x9bff => {
-                let offset = offset - 0x9800;
+            0x1800..=0x1bff => {
+                let offset = offset - 0x1800;
                 self.background_map_0[offset as usize] = byte;
             }
-            0x9c00..=0x9fff => {
-                let offset = offset - 0x9c00;
+            0x1c00..=0x1fff => {
+                let offset = offset - 0x1c00;
                 self.background_map_1[offset as usize] = byte;
             }
             _ => unreachable!(),

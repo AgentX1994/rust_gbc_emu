@@ -5,8 +5,8 @@ use std::{
 
 #[derive(Clone, Copy)]
 struct Inner {
-    high: u8,
     low: u8,
+    high: u8,
 }
 
 #[derive(Clone, Copy)]

@@ -12,19 +12,25 @@ fn main() {
                 .long("debug")
                 .help("Starts the debugger"),
         )
+        .arg(
+            Arg::with_name("instructions")
+            .short("i")
+            .long("instructions")
+            .help("Shows each instruction as it's executed")
+        )
         .arg(Arg::with_name("ROM").required(true).index(1))
         .get_matches();
 
     let rom = matches.value_of("ROM").unwrap();
-    let mut gbc = Gbc::new(rom).expect("Error Loading rom!");
+    let mut gbc = Gbc::new(rom, matches.is_present("instructions")).expect("Error Loading rom!");
     if matches.is_present("debug") {
         let mut dbg = Debugger::new(gbc);
         dbg.run();
     } else {
-        gbc.dump_state();
-        println!();
+        //gbc.dump_state();
+        //println!();
         gbc.run();
-        println!();
-        gbc.dump_state();
+        //println!();
+        //gbc.dump_state();
     }
 }

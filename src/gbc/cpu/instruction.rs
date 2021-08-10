@@ -109,7 +109,9 @@ impl Display for ConditionType {
 
 #[derive(Debug)]
 pub enum Opcode {
-    Unknown,
+    Unknown {
+        opcode: u8,
+    },
     Nop,
     Stop,
     Halt,
@@ -247,7 +249,7 @@ pub enum Opcode {
 impl Opcode {
     fn print(&self, address: u16) -> String {
         match self {
-            Opcode::Unknown => format!("Unknown"),
+            Opcode::Unknown { opcode } => format!("Unknown: {0:02x} {0:08b}", opcode),
             Opcode::Nop => format!("nop"),
             Opcode::Stop => format!("stop"),
             Opcode::Halt => format!("halt"),
@@ -571,6 +573,13 @@ impl Instruction {
                     size: 1,
                 }
             }
+            201 => {
+                return Instruction {
+                    address,
+                    op: Opcode::Ret,
+                    size: 1,
+                }
+            }
             205 => {
                 return Instruction {
                     address,
@@ -890,7 +899,7 @@ impl Instruction {
                 },
                 size: 1,
             };
-        } else if (byte & 0b00110000) == 0b11001001 {
+        } else if (byte & 0b11001111) == 0b11001001 {
             let opcode = (byte >> 4) & 0b11;
             return match opcode {
                 0 => Instruction {
@@ -943,7 +952,7 @@ impl Instruction {
                 },
                 _ => Instruction {
                     address,
-                    op: Opcode::Unknown,
+                    op: Opcode::Unknown { opcode: byte },
                     size: 1,
                 },
             };
@@ -1013,7 +1022,7 @@ impl Instruction {
         //eprintln!("Unknown op code {:02x}", byte);
         Instruction {
             address,
-            op: Opcode::Unknown,
+            op: Opcode::Unknown { opcode: byte },
             size: 1,
         }
     }
