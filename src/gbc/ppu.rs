@@ -70,9 +70,29 @@ impl Tile {
     }
 }
 
+#[derive(Copy, Clone, Debug)]
 pub enum TileAddressingMethod {
     From8000(u8),
     From9000(i8),
+}
+
+impl From<bool> for TileAddressingMethod {
+    fn from(v: bool) -> Self {
+        if v {
+            Self::From9000(0)
+        } else {
+            Self::From8000(0)
+        }
+    }
+}
+
+impl From<TileAddressingMethod> for bool {
+    fn from(s: TileAddressingMethod) -> Self {
+        match s {
+            TileAddressingMethod::From8000(_) => false,
+            TileAddressingMethod::From9000(_) => true,
+        }
+    }
 }
 
 #[derive(Debug)]

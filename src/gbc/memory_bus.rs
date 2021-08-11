@@ -4,7 +4,7 @@ use std::convert::TryInto;
 use std::rc::Rc;
 
 use super::cartridge::Cartridge;
-use super::mmio::Mmio;
+use super::mmio::{apu::Sound, joypad::Joypad, lcd::Lcd, serial::SerialComms, timer::Timer};
 use super::ppu::PictureProcessingUnit;
 
 enum MemoryRegion {
@@ -15,9 +15,15 @@ enum MemoryRegion {
     WorkRam(u16),
     ObjectAttributeMemory(u16),
     Unused,
-    Mmio(u16),
+    Joypad,
+    Serial(u16),
+    Timer(u16),
+    InterruptFlags,
+    Sound(u16),
+    WaveformRam(u16),
+    Lcd(u16),
     HighRam(u16),
-    InterruptMasterEnable,
+    InterruptEnable,
 }
 
 impl From<u16> for MemoryRegion {
@@ -31,9 +37,16 @@ impl From<u16> for MemoryRegion {
             0xe000..=0xfdff => MemoryRegion::WorkRam(address - 0xe000),
             0xfe00..=0xfe9f => MemoryRegion::ObjectAttributeMemory(address - 0xfe00),
             0xfea0..=0xfeff => MemoryRegion::Unused,
-            0xff00..=0xff7f => MemoryRegion::Mmio(address - 0xff00),
+            0xff00 => MemoryRegion::Joypad,
+            0xff01..=0xff02 => MemoryRegion::Serial(address - 0xff01),
+            0xff04..=0xff07 => MemoryRegion::Timer(address - 0xff04),
+            0xff0f => MemoryRegion::InterruptFlags,
+            0xff10..=0xff26 => MemoryRegion::Sound(address - 0xff10),
+            0xff30..=0xff3f => MemoryRegion::WaveformRam(address - 0xff30),
+            0xff40..=0xff4b => MemoryRegion::Lcd(address - 0xff40),
             0xff80..=0xfffe => MemoryRegion::HighRam(address - 0xff80),
-            0xffff => MemoryRegion::InterruptMasterEnable,
+            0xffff => MemoryRegion::InterruptEnable,
+            _ => MemoryRegion::Unused,
         }
     }
 }
@@ -43,9 +56,19 @@ pub struct MemoryBus {
     pub cartridge: Rc<RefCell<Cartridge>>,
     pub ram: Rc<RefCell<[u8; 8192]>>,
     pub ppu: Rc<RefCell<PictureProcessingUnit>>,
-    pub mmio: Rc<RefCell<Mmio>>,
+    pub joypad: Rc<RefCell<Joypad>>,
+    pub serial: Rc<RefCell<SerialComms>>,
+    pub timer_control: Rc<RefCell<Timer>>,
+    pub sound: Rc<RefCell<Sound>>,
+    pub lcd: Rc<RefCell<Lcd>>,
+    pub vram_select: Rc<RefCell<u8>>,
+    pub disable_boot_rom: Rc<RefCell<bool>>,
+    pub vram_dma: Rc<RefCell<[u8; 4]>>,
+    pub color_palettes: Rc<RefCell<[u8; 2]>>,
+    pub wram_bank_select: Rc<RefCell<u8>>,
+    pub interrupt_flags: Rc<RefCell<u8>>,
     pub high_ram: Rc<RefCell<[u8; 126]>>,
-    pub interrupt_master_enable: Rc<RefCell<bool>>,
+    pub interrupt_enable: Rc<RefCell<u8>>,
 }
 
 impl MemoryBus {
@@ -53,17 +76,37 @@ impl MemoryBus {
         cartridge: Rc<RefCell<Cartridge>>,
         ram: Rc<RefCell<[u8; 8192]>>,
         ppu: Rc<RefCell<PictureProcessingUnit>>,
-        mmio: Rc<RefCell<Mmio>>,
+        joypad: Rc<RefCell<Joypad>>,
+        serial: Rc<RefCell<SerialComms>>,
+        timer_control: Rc<RefCell<Timer>>,
+        sound: Rc<RefCell<Sound>>,
+        lcd: Rc<RefCell<Lcd>>,
+        vram_select: Rc<RefCell<u8>>,
+        disable_boot_rom: Rc<RefCell<bool>>,
+        vram_dma: Rc<RefCell<[u8; 4]>>,
+        color_palettes: Rc<RefCell<[u8; 2]>>,
+        wram_bank_select: Rc<RefCell<u8>>,
+        interrupt_flags: Rc<RefCell<u8>>,
         high_ram: Rc<RefCell<[u8; 126]>>,
-        interrupt_master_enable: Rc<RefCell<bool>>,
+        interrupt_enable: Rc<RefCell<u8>>,
     ) -> Self {
         MemoryBus {
             cartridge,
             ram,
             ppu,
-            mmio,
+            joypad,
+            serial,
+            timer_control,
+            sound,
+            lcd,
+            vram_select,
+            disable_boot_rom,
+            vram_dma,
+            color_palettes,
+            wram_bank_select,
+            interrupt_flags,
             high_ram,
-            interrupt_master_enable,
+            interrupt_enable: interrupt_enable,
         }
     }
 
@@ -87,9 +130,15 @@ impl MemoryBus {
                 let second_nibble = ((address >> 4) & 0xf) as u8;
                 (second_nibble << 4) | second_nibble
             }
-            MemoryRegion::Mmio(offset) => self.mmio.borrow().read_u8(offset),
+            MemoryRegion::Joypad => self.joypad.borrow().read_u8(),
+            MemoryRegion::Serial(offset) => self.serial.borrow().read_u8(offset),
+            MemoryRegion::Timer(offset) => self.timer_control.borrow().read_u8(offset),
+            MemoryRegion::InterruptFlags => *self.interrupt_flags.borrow(),
+            MemoryRegion::Sound(offset) => self.sound.borrow().read_u8(offset),
+            MemoryRegion::WaveformRam(offset) => self.sound.borrow().read_u8_from_waveform(offset),
+            MemoryRegion::Lcd(offset) => self.lcd.borrow().read_u8(offset),
             MemoryRegion::HighRam(offset) => self.high_ram.borrow()[offset as usize],
-            MemoryRegion::InterruptMasterEnable => *self.interrupt_master_enable.borrow() as u8,
+            MemoryRegion::InterruptEnable => *self.interrupt_enable.borrow() as u8,
         }
     }
 
@@ -135,10 +184,19 @@ impl MemoryBus {
                 .borrow_mut()
                 .write_object_attribute_memory(offset, byte),
             MemoryRegion::Unused => todo!(),
-            MemoryRegion::Mmio(offset) => self.mmio.borrow_mut().write_u8(offset, byte),
+            MemoryRegion::Joypad => self.joypad.borrow_mut().write_u8(byte),
+            MemoryRegion::Serial(offset) => self.serial.borrow_mut().write_u8(offset, byte),
+            MemoryRegion::Timer(offset) => self.timer_control.borrow_mut().write_u8(offset, byte),
+            MemoryRegion::InterruptFlags => *self.interrupt_flags.borrow_mut() = byte,
+            MemoryRegion::Sound(offset) => self.sound.borrow_mut().write_u8(offset, byte),
+            MemoryRegion::WaveformRam(offset) => {
+                self.sound.borrow_mut().write_u8_from_waveform(offset, byte)
+            }
+            MemoryRegion::Lcd(offset) => self.lcd.borrow_mut().write_u8(offset, byte),
             MemoryRegion::HighRam(offset) => self.high_ram.borrow_mut()[offset as usize] = byte,
-            MemoryRegion::InterruptMasterEnable => {
-                *self.interrupt_master_enable.borrow_mut() = byte != 0
+            MemoryRegion::InterruptEnable => {
+                println!("Setting IE to {}", byte);
+                *self.interrupt_enable.borrow_mut() = byte
             }
         }
     }

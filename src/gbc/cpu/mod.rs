@@ -24,7 +24,7 @@ pub struct InterruptRequest {
     pub joypad: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum CpuState {
     Running,
     Halted,
@@ -41,6 +41,7 @@ pub struct Cpu {
     pc: u16,
     sp: u16,
     state: CpuState,
+    interrupts_enabled: bool,
 }
 
 impl Default for Cpu {
@@ -54,6 +55,7 @@ impl Default for Cpu {
             pc: 0x100,
             sp: 0xfffe,
             state: CpuState::Running,
+            interrupts_enabled: false,
         }
     }
 }
@@ -70,9 +72,40 @@ impl Cpu {
 
     pub fn interrupt(&mut self, memory_bus: &mut MemoryBus, interrupt_number: u8) {
         assert!(interrupt_number < 5);
+        let interrupts_enabled = memory_bus.read_u8(INTERRUPT_ENABLE_REGISTER_ADDRESS);
+        let this_interrupt_enabled = (interrupts_enabled & (1 << interrupt_number)) != 0;
+        if self.state == CpuState::Halted && this_interrupt_enabled {
+            println!(
+                "Un-Halted by interrupt {} ({})",
+                interrupt_number,
+                Self::interrupt_number_to_string(interrupt_number)
+            );
+            self.state = CpuState::Running;
+        } else if self.state == CpuState::Stopped && interrupt_number == 4 && this_interrupt_enabled {
+            // Joypad can interrupt from Stopped
+            self.state = CpuState::Running;
+        }
         let mut interrupt_flags = memory_bus.read_u8(INTERRUPT_FLAGS_REGISTER_ADDRESS);
         Self::set_bit(interrupt_number, &mut interrupt_flags);
         memory_bus.write_u8(INTERRUPT_FLAGS_REGISTER_ADDRESS, interrupt_flags);
+    }
+
+    pub fn request_interrupts(&mut self, memory_bus: &mut MemoryBus, requests: &InterruptRequest) {
+        if requests.vblank {
+            self.interrupt(memory_bus, 0)
+        }
+        if requests.stat {
+            self.interrupt(memory_bus, 1)
+        }
+        if requests.timer {
+            self.interrupt(memory_bus, 2)
+        }
+        if requests.serial {
+            self.interrupt(memory_bus, 3)
+        }
+        if requests.joypad {
+            self.interrupt(memory_bus, 4)
+        }
     }
 
     pub fn get_program_counter(&self) -> u16 {
@@ -89,6 +122,10 @@ impl Cpu {
     }
 
     pub fn single_step(&mut self, memory_bus: &mut MemoryBus) -> u64 {
+        if self.state != CpuState::Running {
+            return 1;
+        }
+
         if self.should_service_interrupt(memory_bus) {
             self.service_interrupt(memory_bus);
             return 5;
@@ -386,7 +423,7 @@ impl Cpu {
             }
             Opcode::Reti => {
                 self.ret(memory_bus);
-                self.enable_interrupts(memory_bus);
+                self.interrupts_enabled = true;
                 16
             }
             Opcode::Pop { register } => {
@@ -1027,11 +1064,11 @@ impl Cpu {
                 4
             }
             Opcode::Di => {
-                self.disable_interrupts(memory_bus);
+                self.interrupts_enabled = false;
                 4
             }
             Opcode::Ei => {
-                self.enable_interrupts(memory_bus);
+                self.interrupts_enabled = true;
                 4
             }
         }
@@ -1065,14 +1102,6 @@ impl Cpu {
 
     fn ret(&mut self, memory_bus: &mut MemoryBus) {
         self.pc = self.pop(memory_bus);
-    }
-
-    fn enable_interrupts(&mut self, memory_bus: &mut MemoryBus) {
-        memory_bus.write_u8(INTERRUPT_ENABLE_REGISTER_ADDRESS, 1);
-    }
-
-    fn disable_interrupts(&mut self, memory_bus: &mut MemoryBus) {
-        memory_bus.write_u8(INTERRUPT_ENABLE_REGISTER_ADDRESS, 0);
     }
 
     fn test_bit(bit: u8, v: u8) -> bool {
@@ -1340,13 +1369,27 @@ impl Cpu {
     }
 
     fn should_service_interrupt(&self, memory_bus: &mut MemoryBus) -> bool {
+        if !self.interrupts_enabled {
+            return false;
+        }
         // Check if interrupts are enabled
-        let interrupts_enabled = memory_bus.read_u8(INTERRUPT_ENABLE_REGISTER_ADDRESS) != 0;
-        if !interrupts_enabled {
+        let enabled_interrupts_bitmask = memory_bus.read_u8(INTERRUPT_ENABLE_REGISTER_ADDRESS);
+        if enabled_interrupts_bitmask == 0 {
             return false;
         }
         // Check if any interrupts are waiting
-        memory_bus.read_u8(INTERRUPT_FLAGS_REGISTER_ADDRESS) != 0
+        (memory_bus.read_u8(INTERRUPT_FLAGS_REGISTER_ADDRESS) & enabled_interrupts_bitmask) != 0
+    }
+
+    fn interrupt_number_to_string(number: u8) -> &'static str {
+        match number {
+            0 => "vblank",
+            1 => "lcd stat",
+            2 => "timer",
+            3 => "serial",
+            4 => "joypad",
+            _ => "unknown",
+        }
     }
 
     fn service_interrupt(&mut self, memory_bus: &mut MemoryBus) {
@@ -1356,18 +1399,23 @@ impl Cpu {
         // 2 cycles of nop
         // Push PC onto stack
         // The PC is set to the interrupt handler
-        self.state = CpuState::Running;
 
         // Determine which interrupt this is. Lower bits in the interrupt flags register
         // are higher priority
-        let mut interrupt_flags = memory_bus.read_u8(INTERRUPT_FLAGS_REGISTER_ADDRESS);
+        let mut interrupt_flags = memory_bus.read_u8(INTERRUPT_FLAGS_REGISTER_ADDRESS)
+            & memory_bus.read_u8(INTERRUPT_ENABLE_REGISTER_ADDRESS);
         let interrupt_number = interrupt_flags.trailing_zeros() as u8;
         assert!(interrupt_number < 5);
+        println!(
+            "Servicing interrupt #{} ({})",
+            interrupt_number,
+            Self::interrupt_number_to_string(interrupt_number)
+        );
         // Clear this bit
         Self::reset_bit(interrupt_number, &mut interrupt_flags);
         memory_bus.write_u8(INTERRUPT_FLAGS_REGISTER_ADDRESS, interrupt_flags);
         // Disable interrupts
-        self.disable_interrupts(memory_bus);
+        self.interrupts_enabled = false;
 
         // 2 cycles of nop does nothing
         // Calling the interrupt handler should accomplish the last two steps
