@@ -304,8 +304,8 @@ impl Cartridge {
 
     pub fn read_rom_selected_bank(&self, offset: u16) -> u8 {
         assert!(offset < 16384);
-        let address = offset + 16384;
-        // TODO implement MBC
+        // TODO check MBC implementation
+        let address = offset + 16384*self.rom_bank_selected as u16;
         self.rom[address as usize]
     }
 

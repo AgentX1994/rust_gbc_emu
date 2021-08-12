@@ -22,6 +22,7 @@ enum MemoryRegion {
     Sound(u16),
     WaveformRam(u16),
     Lcd(u16),
+    Key1Flag,
     HighRam(u16),
     InterruptEnable,
 }
@@ -44,6 +45,7 @@ impl From<u16> for MemoryRegion {
             0xff10..=0xff26 => MemoryRegion::Sound(address - 0xff10),
             0xff30..=0xff3f => MemoryRegion::WaveformRam(address - 0xff30),
             0xff40..=0xff4b => MemoryRegion::Lcd(address - 0xff40),
+            0xff4d => MemoryRegion::Key1Flag,
             0xff80..=0xfffe => MemoryRegion::HighRam(address - 0xff80),
             0xffff => MemoryRegion::InterruptEnable,
             _ => MemoryRegion::Unused,
@@ -137,6 +139,7 @@ impl MemoryBus {
             MemoryRegion::Sound(offset) => self.sound.borrow().read_u8(offset),
             MemoryRegion::WaveformRam(offset) => self.sound.borrow().read_u8_from_waveform(offset),
             MemoryRegion::Lcd(offset) => self.lcd.borrow().read_u8(offset),
+            MemoryRegion::Key1Flag => 0xff, // Undocumented flag, KEY1 in CGB
             MemoryRegion::HighRam(offset) => self.high_ram.borrow()[offset as usize],
             MemoryRegion::InterruptEnable => *self.interrupt_enable.borrow() as u8,
         }
@@ -183,7 +186,7 @@ impl MemoryBus {
                 .ppu
                 .borrow_mut()
                 .write_object_attribute_memory(offset, byte),
-            MemoryRegion::Unused => todo!(),
+            MemoryRegion::Unused => (),
             MemoryRegion::Joypad => self.joypad.borrow_mut().write_u8(byte),
             MemoryRegion::Serial(offset) => self.serial.borrow_mut().write_u8(offset, byte),
             MemoryRegion::Timer(offset) => self.timer_control.borrow_mut().write_u8(offset, byte),
@@ -193,6 +196,7 @@ impl MemoryBus {
                 self.sound.borrow_mut().write_u8_from_waveform(offset, byte)
             }
             MemoryRegion::Lcd(offset) => self.lcd.borrow_mut().write_u8(offset, byte),
+            MemoryRegion::Key1Flag => (),
             MemoryRegion::HighRam(offset) => self.high_ram.borrow_mut()[offset as usize] = byte,
             MemoryRegion::InterruptEnable => {
                 println!("Setting IE to {}", byte);

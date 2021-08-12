@@ -49,9 +49,9 @@ impl Default for Cpu {
         Cpu {
             show_instructions: false,
             af: RegisterStorage::new(0x01b0),
-            bc: RegisterStorage::default(),
-            de: RegisterStorage::default(),
-            hl: RegisterStorage::default(),
+            bc: RegisterStorage::new(0x0013),
+            de: RegisterStorage::new(0x00d8),
+            hl: RegisterStorage::new(0x014d),
             pc: 0x100,
             sp: 0xfffe,
             state: CpuState::Running,
