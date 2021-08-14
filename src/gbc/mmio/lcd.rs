@@ -1,16 +1,89 @@
 use std::convert::From;
 
-use crate::gbc::ppu::TileAddressingMethod;
+use crate::gbc::ppu::{ColorIndex, TileAddressingMethod};
 
 #[derive(Copy, Clone, Debug)]
-enum TileMap {
+pub enum Color {
+    White,
+    LightGray,
+    DarkGray,
+    Black,
+}
+
+impl Default for Color {
+    fn default() -> Self {
+        Self::White
+    }
+}
+
+impl From<u8> for Color {
+    fn from(x: u8) -> Self {
+        match x {
+            0 => Self::White,
+            1 => Self::LightGray,
+            2 => Self::DarkGray,
+            3 => Self::Black,
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl Color {
+    fn to_u8(&self) -> u8 {
+        match self {
+            Color::White => 0,
+            Color::LightGray => 1,
+            Color::DarkGray => 2,
+            Color::Black => 3,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Default)]
+pub struct Palette {
+    pub colors: [Color; 4],
+}
+
+impl From<u8> for Palette {
+    fn from(v: u8) -> Self {
+        Self {
+            colors: [
+                Color::from(v & 0x3),
+                Color::from((v >> 2) & 0x3),
+                Color::from((v >> 4) & 0x3),
+                Color::from((v >> 6) & 0x3),
+            ],
+        }
+    }
+}
+
+impl Palette {
+    fn to_u8(&self) -> u8 {
+        (self.colors[3].to_u8() << 6)
+            | (self.colors[2].to_u8() << 4)
+            | (self.colors[1].to_u8() << 2)
+            | self.colors[0].to_u8()
+    }
+
+    pub fn get_color(&self, index: &ColorIndex) -> Color {
+        match index {
+            ColorIndex::Color0 => self.colors[0],
+            ColorIndex::Color1 => self.colors[1],
+            ColorIndex::Color2 => self.colors[2],
+            ColorIndex::Color3 => self.colors[3],
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum TileMap {
     From9800,
     From9C00,
 }
 
 impl From<bool> for TileMap {
     fn from(v: bool) -> Self {
-        if v {
+        if !v {
             Self::From9800
         } else {
             Self::From9C00
@@ -28,7 +101,7 @@ impl From<TileMap> for bool {
 }
 
 #[derive(Copy, Clone, Debug)]
-enum SpriteSize {
+pub enum SpriteSize {
     Small, // 8 x 8
     Large, // 8 x 16
 }
@@ -207,30 +280,32 @@ pub struct Lcd {
     ly: u8,
     ly_compare: u8,
     dma_start_high_byte: u8,
-    background_palette: u8,
-    object_palette_0: u8,
-    object_pallete_1: u8,
+    background_palette: Palette,
+    object_palette_0: Palette,
+    object_pallete_1: Palette,
     window_y: u8,
     window_x: u8,
-    lx: u8,
+    lx: u16,
+    last_stat_interrupt: bool,
 }
 
 impl Default for Lcd {
     fn default() -> Self {
         Self {
-            control: 0.into(),
-            status: 0.into(),
+            control: 0x91.into(),
+            status: 0x85.into(),
             scroll_y: 0,
             scroll_x: 0,
             ly: 0,
             ly_compare: 0,
-            dma_start_high_byte: 0,
-            background_palette: 0,
-            object_palette_0: 0,
-            object_pallete_1: 0,
+            dma_start_high_byte: 0xff,
+            background_palette: 0xfc.into(),
+            object_palette_0: 0xff.into(),
+            object_pallete_1: 0xff.into(),
             window_y: 0,
             window_x: 0,
             lx: 0,
+            last_stat_interrupt: true,
         }
     }
 }
@@ -245,9 +320,9 @@ impl Lcd {
             0x4 => self.ly,
             0x5 => self.ly_compare,
             0x6 => self.dma_start_high_byte,
-            0x7 => self.background_palette,
-            0x8 => self.object_palette_0,
-            0x9 => self.object_pallete_1,
+            0x7 => self.background_palette.to_u8(),
+            0x8 => self.object_palette_0.to_u8(),
+            0x9 => self.object_pallete_1.to_u8(),
             0xa => self.window_y,
             0xb => self.window_x,
             _ => unreachable!(),
@@ -263,22 +338,22 @@ impl Lcd {
             0x4 => (), // unwritable: self.ly = byte,
             0x5 => self.ly_compare = byte,
             0x6 => self.dma_start_high_byte = byte,
-            0x7 => self.background_palette = byte,
-            0x8 => self.object_palette_0 = byte,
-            0x9 => self.object_pallete_1 = byte,
+            0x7 => self.background_palette = byte.into(),
+            0x8 => self.object_palette_0 = byte.into(),
+            0x9 => self.object_pallete_1 = byte.into(),
             0xa => self.window_y = byte,
             0xb => self.window_x = byte,
             _ => unreachable!(),
         }
     }
 
-    pub fn tick(&mut self, cycles: u64) -> (bool, bool) {
+    pub fn tick(&mut self) -> (bool, bool) {
         let mut vblank_interrupt = false;
         let mut stat_interrupt = false;
-        self.lx += cycles as u8;
-        if self.lx > 160 {
+        self.lx += 1;
+        if self.lx > 456 {
             self.ly += 1;
-            self.lx -= 160;
+            self.lx = 0;
         }
         if self.ly == 144 {
             vblank_interrupt = true;
@@ -287,6 +362,62 @@ impl Lcd {
             self.ly = 0;
         }
 
-        (vblank_interrupt, stat_interrupt)
+        if self.status.interrupt_on_hblank && self.lx == 160 {
+            stat_interrupt = true;
+        }
+        if self.status.interrupt_on_vblank && self.ly == 144 {
+            stat_interrupt = true;
+        }
+        // TODO OAM stat interrupt
+        if self.status.interrupt_on_lyc && self.ly == self.ly_compare {
+            stat_interrupt = true;
+        }
+
+        // TODO Deal with modes
+
+        // only interrupt on rising edge
+        let should_stat_interrupt = self.last_stat_interrupt != stat_interrupt;
+        self.last_stat_interrupt = stat_interrupt;
+        (vblank_interrupt, should_stat_interrupt)
+    }
+
+    pub fn get_ly(&self) -> u8 {
+        self.ly
+    }
+
+    pub fn get_lx(&self) -> u16 {
+        self.lx
+    }
+
+    pub fn get_scroll_offsets(&self) -> (u8, u8) {
+        (self.scroll_x, self.scroll_y)
+    }
+
+    pub fn get_background_palette(&self) -> Palette {
+        self.background_palette
+    }
+
+    pub fn get_addressing_mode(&self) -> TileAddressingMethod {
+        self.control.tile_addressing_mode
+    }
+
+    pub fn get_background_tile_map(&self) -> TileMap {
+        self.control.bg_tile_map
+    }
+
+    pub fn get_background_window_priority(&self) -> bool {
+        self.control.bg_window_enable_or_priority
+    }
+
+    pub fn get_object_palettes(&self) -> (Palette, Palette) {
+        (self.object_palette_0, self.object_pallete_1)
+    }
+
+    pub fn get_window_coords(&self) -> (u8, u8) {
+        (self.window_x, self.window_y)
+    }
+
+    pub fn get_window_tile_map(&self) -> TileMap {
+        self.control.window_tile_map
     }
 }

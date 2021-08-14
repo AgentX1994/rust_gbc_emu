@@ -75,11 +75,11 @@ impl Cpu {
         let interrupts_enabled = memory_bus.read_u8(INTERRUPT_ENABLE_REGISTER_ADDRESS);
         let this_interrupt_enabled = (interrupts_enabled & (1 << interrupt_number)) != 0;
         if self.state == CpuState::Halted && this_interrupt_enabled {
-            println!(
-                "Un-Halted by interrupt {} ({})",
-                interrupt_number,
-                Self::interrupt_number_to_string(interrupt_number)
-            );
+            // println!(
+            //     "Un-Halted by interrupt {} ({})",
+            //     interrupt_number,
+            //     Self::interrupt_number_to_string(interrupt_number)
+            // );
             self.state = CpuState::Running;
         } else if self.state == CpuState::Stopped && interrupt_number == 4 && this_interrupt_enabled {
             // Joypad can interrupt from Stopped
@@ -1381,6 +1381,7 @@ impl Cpu {
         (memory_bus.read_u8(INTERRUPT_FLAGS_REGISTER_ADDRESS) & enabled_interrupts_bitmask) != 0
     }
 
+    #[allow(dead_code)]
     fn interrupt_number_to_string(number: u8) -> &'static str {
         match number {
             0 => "vblank",
@@ -1406,11 +1407,11 @@ impl Cpu {
             & memory_bus.read_u8(INTERRUPT_ENABLE_REGISTER_ADDRESS);
         let interrupt_number = interrupt_flags.trailing_zeros() as u8;
         assert!(interrupt_number < 5);
-        println!(
-            "Servicing interrupt #{} ({})",
-            interrupt_number,
-            Self::interrupt_number_to_string(interrupt_number)
-        );
+        // println!(
+        //     "Servicing interrupt #{} ({})",
+        //     interrupt_number,
+        //     Self::interrupt_number_to_string(interrupt_number)
+        // );
         // Clear this bit
         Self::reset_bit(interrupt_number, &mut interrupt_flags);
         memory_bus.write_u8(INTERRUPT_FLAGS_REGISTER_ADDRESS, interrupt_flags);
@@ -1452,19 +1453,45 @@ mod tests {
 
     fn create_default_memory_bus() -> MemoryBus {
         use crate::gbc::cartridge::Cartridge;
-        use crate::gbc::mmio::Mmio;
+        use crate::gbc::mmio::{apu::Sound, joypad::Joypad, lcd::Lcd, serial::SerialComms, timer::Timer};
         use crate::gbc::ppu::PictureProcessingUnit;
-        use std::cell::RefCell;
-        use std::rc::Rc;
-        let cartridge = Rc::new(RefCell::new(Cartridge::default()));
-        let ram = Rc::new(RefCell::new([0u8; 8192]));
-        let ppu = Rc::new(RefCell::new(PictureProcessingUnit::default()));
-        let mmio = Rc::new(RefCell::new(Mmio::default()));
-        let high_ram = Rc::new(RefCell::new([0u8; 126]));
-        let interrupt_master_enable = Rc::new(RefCell::new(false));
+        use std::sync::{Arc, Mutex};
+        let cartridge = Arc::new(Mutex::new(Cartridge::default()));
+        let ram = Arc::new(Mutex::new([0u8; 8192]));
+        let ppu = Arc::new(Mutex::new(PictureProcessingUnit::default()));
+        let joypad = Arc::new(Mutex::new(Joypad::default()));
+        let serial =  Arc::new(Mutex::new(SerialComms::default()));
+        let timer_control =  Arc::new(Mutex::new(Timer::default()));
+        let sound =  Arc::new(Mutex::new(Sound::default()));
+        let lcd =  Arc::new(Mutex::new(Lcd::default()));
+        let vram_select =  Arc::new(Mutex::new(0));
+        let disable_boot_rom =  Arc::new(Mutex::new(false));
+        let vram_dma =  Arc::new(Mutex::new([0; 4]));
+        let color_palettes =  Arc::new(Mutex::new([0; 2]));
+        let wram_bank_select =  Arc::new(Mutex::new(0));
+        let interrupt_flags =  Arc::new(Mutex::new(0));
+        let high_ram = Arc::new(Mutex::new([0u8; 127]));
+        let interrupt_enable = Arc::new(Mutex::new(0u8));
 
-        MemoryBus::new(cartridge, ram, ppu, mmio, high_ram, interrupt_master_enable)
-    }
+        MemoryBus::new(
+            cartridge,
+            ram,
+            ppu,
+            joypad,
+            serial,
+            timer_control,
+            sound,
+            lcd,
+            vram_select,
+            disable_boot_rom,
+            vram_dma,
+            color_palettes,
+            wram_bank_select,
+            interrupt_flags,
+            high_ram,
+            interrupt_enable,
+        )
+            }
 
     #[test]
     fn test_default_cpu() {
@@ -1662,7 +1689,7 @@ mod tests {
                 },
             );
             let a = cpu.get_a();
-            if (a != byte.rotate_left(1)) {
+            if a != byte.rotate_left(1) {
                 println!(
                     "ERROR: RLCA of {:#02x} should be {:#02x}, got {:02x}",
                     byte,
@@ -1704,9 +1731,8 @@ mod tests {
                 cpu.set_a(a);
                 cpu.execute_instruction(&mut memory_bus, insn);
                 let real_res = a.wrapping_sub(imm);
-                let imm_2s_comp = (!imm).wrapping_add(1);
                 let res = cpu.get_a();
-                if (res != real_res) {
+                if res != real_res {
                     println!(
                         "Error: {:#02x} - {:#02x} results in {:#02x} instead of {:#02x}",
                         a, imm, res, real_res
@@ -1765,9 +1791,8 @@ mod tests {
                     cpu.set_carry_flag_from_bool(carry);
                     cpu.execute_instruction(&mut memory_bus, insn);
                     let real_res = a.wrapping_sub(imm).wrapping_sub(carry as u8);
-                    let imm_2s_comp = (!imm).wrapping_add(1);
                     let res = cpu.get_a();
-                    if (res != real_res) {
+                    if res != real_res {
                         println!(
                             "Error: {:#02x} - {:#02x} - {} results in {:#02x} instead of {:#02x}",
                             a, imm, carry as u8, res, real_res,

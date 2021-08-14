@@ -247,7 +247,7 @@ impl Debugger {
                         }
                         "header" => {
                             let cart_rc = self.gbc.get_cartridge();
-                            let cart = cart_rc.borrow();
+                            let cart = cart_rc.lock().unwrap();
                             println!("Cartridge: {}", cart.title);
                             println!("\tManufacturer Code: {:?}", cart.manufacturer_code);
                             println!(

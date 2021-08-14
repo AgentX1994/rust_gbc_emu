@@ -1,7 +1,5 @@
-//use std::borrow::Borrow;
-use std::cell::RefCell;
 use std::convert::TryInto;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 use super::cartridge::Cartridge;
 use super::mmio::{apu::Sound, joypad::Joypad, lcd::Lcd, serial::SerialComms, timer::Timer};
@@ -55,42 +53,42 @@ impl From<u16> for MemoryRegion {
 
 #[derive(Debug)]
 pub struct MemoryBus {
-    pub cartridge: Rc<RefCell<Cartridge>>,
-    pub ram: Rc<RefCell<[u8; 8192]>>,
-    pub ppu: Rc<RefCell<PictureProcessingUnit>>,
-    pub joypad: Rc<RefCell<Joypad>>,
-    pub serial: Rc<RefCell<SerialComms>>,
-    pub timer_control: Rc<RefCell<Timer>>,
-    pub sound: Rc<RefCell<Sound>>,
-    pub lcd: Rc<RefCell<Lcd>>,
-    pub vram_select: Rc<RefCell<u8>>,
-    pub disable_boot_rom: Rc<RefCell<bool>>,
-    pub vram_dma: Rc<RefCell<[u8; 4]>>,
-    pub color_palettes: Rc<RefCell<[u8; 2]>>,
-    pub wram_bank_select: Rc<RefCell<u8>>,
-    pub interrupt_flags: Rc<RefCell<u8>>,
-    pub high_ram: Rc<RefCell<[u8; 126]>>,
-    pub interrupt_enable: Rc<RefCell<u8>>,
+    pub cartridge: Arc<Mutex<Cartridge>>,
+    pub ram: Arc<Mutex<[u8; 8192]>>,
+    pub ppu: Arc<Mutex<PictureProcessingUnit>>,
+    pub joypad: Arc<Mutex<Joypad>>,
+    pub serial: Arc<Mutex<SerialComms>>,
+    pub timer_control: Arc<Mutex<Timer>>,
+    pub sound: Arc<Mutex<Sound>>,
+    pub lcd: Arc<Mutex<Lcd>>,
+    pub vram_select: Arc<Mutex<u8>>,
+    pub disable_boot_rom: Arc<Mutex<bool>>,
+    pub vram_dma: Arc<Mutex<[u8; 4]>>,
+    pub color_palettes: Arc<Mutex<[u8; 2]>>,
+    pub wram_bank_select: Arc<Mutex<u8>>,
+    pub interrupt_flags: Arc<Mutex<u8>>,
+    pub high_ram: Arc<Mutex<[u8; 127]>>,
+    pub interrupt_enable: Arc<Mutex<u8>>,
 }
 
 impl MemoryBus {
     pub fn new(
-        cartridge: Rc<RefCell<Cartridge>>,
-        ram: Rc<RefCell<[u8; 8192]>>,
-        ppu: Rc<RefCell<PictureProcessingUnit>>,
-        joypad: Rc<RefCell<Joypad>>,
-        serial: Rc<RefCell<SerialComms>>,
-        timer_control: Rc<RefCell<Timer>>,
-        sound: Rc<RefCell<Sound>>,
-        lcd: Rc<RefCell<Lcd>>,
-        vram_select: Rc<RefCell<u8>>,
-        disable_boot_rom: Rc<RefCell<bool>>,
-        vram_dma: Rc<RefCell<[u8; 4]>>,
-        color_palettes: Rc<RefCell<[u8; 2]>>,
-        wram_bank_select: Rc<RefCell<u8>>,
-        interrupt_flags: Rc<RefCell<u8>>,
-        high_ram: Rc<RefCell<[u8; 126]>>,
-        interrupt_enable: Rc<RefCell<u8>>,
+        cartridge: Arc<Mutex<Cartridge>>,
+        ram: Arc<Mutex<[u8; 8192]>>,
+        ppu: Arc<Mutex<PictureProcessingUnit>>,
+        joypad: Arc<Mutex<Joypad>>,
+        serial: Arc<Mutex<SerialComms>>,
+        timer_control: Arc<Mutex<Timer>>,
+        sound: Arc<Mutex<Sound>>,
+        lcd: Arc<Mutex<Lcd>>,
+        vram_select: Arc<Mutex<u8>>,
+        disable_boot_rom: Arc<Mutex<bool>>,
+        vram_dma: Arc<Mutex<[u8; 4]>>,
+        color_palettes: Arc<Mutex<[u8; 2]>>,
+        wram_bank_select: Arc<Mutex<u8>>,
+        interrupt_flags: Arc<Mutex<u8>>,
+        high_ram: Arc<Mutex<[u8; 127]>>,
+        interrupt_enable: Arc<Mutex<u8>>,
     ) -> Self {
         MemoryBus {
             cartridge,
@@ -115,33 +113,33 @@ impl MemoryBus {
     pub fn read_u8(&self, address: u16) -> u8 {
         let region = MemoryRegion::from(address);
         match region {
-            MemoryRegion::CartridgeBank0(offset) => self.cartridge.borrow().read_rom_bank_0(offset),
+            MemoryRegion::CartridgeBank0(offset) => self.cartridge.lock().unwrap().read_rom_bank_0(offset),
             MemoryRegion::CartridgeBankSelectable(offset) => {
-                self.cartridge.borrow().read_rom_selected_bank(offset)
+                self.cartridge.lock().unwrap().read_rom_selected_bank(offset)
             }
-            MemoryRegion::VideoRam(offset) => self.ppu.borrow().read_video_ram(offset),
+            MemoryRegion::VideoRam(offset) => self.ppu.lock().unwrap().read_video_ram(offset),
             MemoryRegion::ExternalRam(offset) => {
-                self.cartridge.borrow().read_from_external_ram(offset)
+                self.cartridge.lock().unwrap().read_from_external_ram(offset)
             }
-            MemoryRegion::WorkRam(offset) => self.ram.borrow()[offset as usize],
+            MemoryRegion::WorkRam(offset) => self.ram.lock().unwrap()[offset as usize],
             MemoryRegion::ObjectAttributeMemory(offset) => {
-                self.ppu.borrow().read_object_attribute_memory(offset)
+                self.ppu.lock().unwrap().read_object_attribute_memory(offset)
             }
             MemoryRegion::Unused => {
                 // Use Color Game Boy Revision E behavior I guess?
                 let second_nibble = ((address >> 4) & 0xf) as u8;
                 (second_nibble << 4) | second_nibble
             }
-            MemoryRegion::Joypad => self.joypad.borrow().read_u8(),
-            MemoryRegion::Serial(offset) => self.serial.borrow().read_u8(offset),
-            MemoryRegion::Timer(offset) => self.timer_control.borrow().read_u8(offset),
-            MemoryRegion::InterruptFlags => *self.interrupt_flags.borrow(),
-            MemoryRegion::Sound(offset) => self.sound.borrow().read_u8(offset),
-            MemoryRegion::WaveformRam(offset) => self.sound.borrow().read_u8_from_waveform(offset),
-            MemoryRegion::Lcd(offset) => self.lcd.borrow().read_u8(offset),
+            MemoryRegion::Joypad => self.joypad.lock().unwrap().read_u8(),
+            MemoryRegion::Serial(offset) => self.serial.lock().unwrap().read_u8(offset),
+            MemoryRegion::Timer(offset) => self.timer_control.lock().unwrap().read_u8(offset),
+            MemoryRegion::InterruptFlags => *self.interrupt_flags.lock().unwrap(),
+            MemoryRegion::Sound(offset) => self.sound.lock().unwrap().read_u8(offset),
+            MemoryRegion::WaveformRam(offset) => self.sound.lock().unwrap().read_u8_from_waveform(offset),
+            MemoryRegion::Lcd(offset) => self.lcd.lock().unwrap().read_u8(offset),
             MemoryRegion::Key1Flag => 0xff, // Undocumented flag, KEY1 in CGB
-            MemoryRegion::HighRam(offset) => self.high_ram.borrow()[offset as usize],
-            MemoryRegion::InterruptEnable => *self.interrupt_enable.borrow() as u8,
+            MemoryRegion::HighRam(offset) => self.high_ram.lock().unwrap()[offset as usize],
+            MemoryRegion::InterruptEnable => *self.interrupt_enable.lock().unwrap() as u8,
         }
     }
 
@@ -170,37 +168,37 @@ impl MemoryBus {
         let region = MemoryRegion::from(address);
         match region {
             MemoryRegion::CartridgeBank0(offset) => {
-                self.cartridge.borrow_mut().write_rom_bank_0(offset, byte)
+                self.cartridge.lock().unwrap().write_rom_bank_0(offset, byte)
             }
             MemoryRegion::CartridgeBankSelectable(offset) => self
                 .cartridge
-                .borrow_mut()
+                .lock().unwrap()
                 .write_rom_selected_bank(offset, byte),
-            MemoryRegion::VideoRam(offset) => self.ppu.borrow_mut().write_video_ram(offset, byte),
+            MemoryRegion::VideoRam(offset) => self.ppu.lock().unwrap().write_video_ram(offset, byte),
             MemoryRegion::ExternalRam(offset) => self
                 .cartridge
-                .borrow_mut()
+                .lock().unwrap()
                 .write_to_external_ram(offset, byte),
-            MemoryRegion::WorkRam(offset) => self.ram.borrow_mut()[offset as usize] = byte,
+            MemoryRegion::WorkRam(offset) => self.ram.lock().unwrap()[offset as usize] = byte,
             MemoryRegion::ObjectAttributeMemory(offset) => self
                 .ppu
-                .borrow_mut()
+                .lock().unwrap()
                 .write_object_attribute_memory(offset, byte),
             MemoryRegion::Unused => (),
-            MemoryRegion::Joypad => self.joypad.borrow_mut().write_u8(byte),
-            MemoryRegion::Serial(offset) => self.serial.borrow_mut().write_u8(offset, byte),
-            MemoryRegion::Timer(offset) => self.timer_control.borrow_mut().write_u8(offset, byte),
-            MemoryRegion::InterruptFlags => *self.interrupt_flags.borrow_mut() = byte,
-            MemoryRegion::Sound(offset) => self.sound.borrow_mut().write_u8(offset, byte),
+            MemoryRegion::Joypad => self.joypad.lock().unwrap().write_u8(byte),
+            MemoryRegion::Serial(offset) => self.serial.lock().unwrap().write_u8(offset, byte),
+            MemoryRegion::Timer(offset) => self.timer_control.lock().unwrap().write_u8(offset, byte),
+            MemoryRegion::InterruptFlags => *self.interrupt_flags.lock().unwrap() = byte,
+            MemoryRegion::Sound(offset) => self.sound.lock().unwrap().write_u8(offset, byte),
             MemoryRegion::WaveformRam(offset) => {
-                self.sound.borrow_mut().write_u8_from_waveform(offset, byte)
+                self.sound.lock().unwrap().write_u8_from_waveform(offset, byte)
             }
-            MemoryRegion::Lcd(offset) => self.lcd.borrow_mut().write_u8(offset, byte),
+            MemoryRegion::Lcd(offset) => self.lcd.lock().unwrap().write_u8(offset, byte),
             MemoryRegion::Key1Flag => (),
-            MemoryRegion::HighRam(offset) => self.high_ram.borrow_mut()[offset as usize] = byte,
+            MemoryRegion::HighRam(offset) => self.high_ram.lock().unwrap()[offset as usize] = byte,
             MemoryRegion::InterruptEnable => {
-                println!("Setting IE to {}", byte);
-                *self.interrupt_enable.borrow_mut() = byte
+                // println!("Setting IE to {}", byte);
+                *self.interrupt_enable.lock().unwrap() = byte
             }
         }
     }

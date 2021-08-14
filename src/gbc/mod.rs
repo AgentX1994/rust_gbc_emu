@@ -5,81 +5,85 @@ pub mod memory_bus;
 pub mod mmio;
 pub mod ppu;
 
-use std::cell::RefCell;
-use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use std::{io, path::Path};
 
 use cartridge::Cartridge;
 use cpu::Cpu;
 use debug::{AccessType, BreakReason, Breakpoint};
 use memory_bus::MemoryBus;
-use mmio::{apu::Sound, joypad::Joypad, lcd::Lcd, serial::SerialComms, timer::Timer};
+use mmio::{
+    apu::Sound,
+    joypad::Joypad,
+    lcd::{Color, Lcd},
+    serial::SerialComms,
+    timer::Timer,
+};
 use ppu::PictureProcessingUnit;
 
 use self::cpu::InterruptRequest;
 
 #[derive(Debug)]
 pub struct Gbc {
-    running: bool,
+    running: Arc<AtomicBool>,
+    framebuffer: Arc<Mutex<[[Color; 160]; 144]>>,
     clock_speed: u64, // HZ
     cpu: Cpu,
-    cartridge: Rc<RefCell<Cartridge>>,
-    ram: Rc<RefCell<[u8; 8192]>>,
-    ppu: Rc<RefCell<PictureProcessingUnit>>,
-    joypad: Rc<RefCell<Joypad>>,
-    serial: Rc<RefCell<SerialComms>>,
-    timer_control: Rc<RefCell<Timer>>,
-    sound: Rc<RefCell<Sound>>,
-    lcd: Rc<RefCell<Lcd>>,
-    vram_select: Rc<RefCell<u8>>,
-    disable_boot_rom: Rc<RefCell<bool>>,
-    vram_dma: Rc<RefCell<[u8; 4]>>,
-    color_palettes: Rc<RefCell<[u8; 2]>>,
-    wram_bank_select: Rc<RefCell<u8>>,
-    interrupt_flags: Rc<RefCell<u8>>,
-    high_ram: Rc<RefCell<[u8; 126]>>,
-    interrupt_enable: Rc<RefCell<u8>>,
+    cartridge: Arc<Mutex<Cartridge>>,
+    ram: Arc<Mutex<[u8; 8192]>>,
+    ppu: Arc<Mutex<PictureProcessingUnit>>,
+    joypad: Arc<Mutex<Joypad>>,
+    serial: Arc<Mutex<SerialComms>>,
+    timer_control: Arc<Mutex<Timer>>,
+    sound: Arc<Mutex<Sound>>,
+    lcd: Arc<Mutex<Lcd>>,
+    vram_select: Arc<Mutex<u8>>,
+    disable_boot_rom: Arc<Mutex<bool>>,
+    vram_dma: Arc<Mutex<[u8; 4]>>,
+    color_palettes: Arc<Mutex<[u8; 2]>>,
+    wram_bank_select: Arc<Mutex<u8>>,
+    interrupt_flags: Arc<Mutex<u8>>,
+    high_ram: Arc<Mutex<[u8; 127]>>,
+    interrupt_enable: Arc<Mutex<u8>>,
     cycle_count: u64,
     breakpoints: Vec<Breakpoint>,
     break_reason: Option<BreakReason>,
-    interrupted: Arc<AtomicBool>,
 }
 
 impl Gbc {
-    pub fn new<P: AsRef<Path>>(rom_path: P, show_instructions: bool) -> io::Result<Self> {
+    pub fn new<P: AsRef<Path>>(
+        rom_path: P,
+        framebuffer: Arc<Mutex<[[Color; 160]; 144]>>,
+        running: Arc<AtomicBool>,
+        show_instructions: bool,
+    ) -> io::Result<Self> {
         let cartridge = Cartridge::new(rom_path)?;
-        let interrupted = Arc::new(AtomicBool::new(false));
-        let i = interrupted.clone();
-        ctrlc::set_handler(move || {
-            i.store(true, Ordering::SeqCst);
-        })
-        .expect("Error setting Ctrl-C handler");
         Ok(Gbc {
-            running: false,
+            running,
+            framebuffer,
             clock_speed: 4194304, // TODO switch based on detected cartridge / config
             cpu: Cpu::new(show_instructions),
-            cartridge: Rc::new(RefCell::new(cartridge)),
-            ram: Rc::new(RefCell::new([0; 8192])),
-            ppu: Rc::new(RefCell::new(PictureProcessingUnit::default())),
-            joypad: Rc::new(RefCell::new(Joypad::default())),
-            serial: Rc::new(RefCell::new(SerialComms::default())),
-            timer_control: Rc::new(RefCell::new(Timer::default())),
-            sound: Rc::new(RefCell::new(Sound::default())),
-            lcd: Rc::new(RefCell::new(Lcd::default())),
-            vram_select: Rc::new(RefCell::new(0)),
-            disable_boot_rom: Rc::new(RefCell::new(false)),
-            vram_dma: Rc::new(RefCell::new([0; 4])),
-            color_palettes: Rc::new(RefCell::new([0; 2])),
-            wram_bank_select: Rc::new(RefCell::new(0)),
-            interrupt_flags: Rc::new(RefCell::new(0)),
-            high_ram: Rc::new(RefCell::new([0; 126])),
-            interrupt_enable: Rc::new(RefCell::new(0)),
+            cartridge: Arc::new(Mutex::new(cartridge)),
+            ram: Arc::new(Mutex::new([0; 8192])),
+            ppu: Arc::new(Mutex::new(PictureProcessingUnit::default())),
+            joypad: Arc::new(Mutex::new(Joypad::default())),
+            serial: Arc::new(Mutex::new(SerialComms::default())),
+            timer_control: Arc::new(Mutex::new(Timer::default())),
+            sound: Arc::new(Mutex::new(Sound::default())),
+            lcd: Arc::new(Mutex::new(Lcd::default())),
+            vram_select: Arc::new(Mutex::new(0)),
+            disable_boot_rom: Arc::new(Mutex::new(false)),
+            vram_dma: Arc::new(Mutex::new([0; 4])),
+            color_palettes: Arc::new(Mutex::new([0; 2])),
+            wram_bank_select: Arc::new(Mutex::new(0)),
+            interrupt_flags: Arc::new(Mutex::new(0)),
+            high_ram: Arc::new(Mutex::new([0; 127])),
+            interrupt_enable: Arc::new(Mutex::new(0)),
             cycle_count: 0,
             breakpoints: Vec::new(),
             break_reason: None,
-            interrupted,
         })
     }
 
@@ -108,21 +112,16 @@ impl Gbc {
 
     fn check_execute_breakpoints(&mut self) {
         let pc = self.cpu.get_program_counter();
-        // println!("\tCurrent pc: {}", pc);
         for bp in self.breakpoints.iter() {
-            // println!("\tChecking breakpoint {} {} {} {}", bp.address, bp.access_type, bp.length, bp.reason);
             if !bp.access_type.on_execute() {
-                // println!("\tNot an execute bp");
                 continue;
             }
 
             if !bp.matches_address(pc) {
-                // println!("\tNot an matching address");
                 continue;
             }
 
-            // println!("\thit!");
-            self.running = false;
+            self.running.store(false, Ordering::Relaxed);
             self.break_reason = Some(bp.reason);
             return;
         }
@@ -150,38 +149,48 @@ impl Gbc {
     }
 
     pub fn run(&mut self) {
-        // clear any previous interrupts
-        self.interrupted.store(false, Ordering::SeqCst);
-        self.running = true;
-        while self.running {
-            self.single_step();
+        self.running.store(true, Ordering::Relaxed);
+        while self.running.load(Ordering::Relaxed) {
+            let start = Instant::now();
+            let cycles = self.single_step();
+            self.cycle_count += cycles;
             self.check_execute_breakpoints();
-            if self.interrupted.load(Ordering::SeqCst) {
-                self.running = false;
-                println!();
-            }
+            let sleep_nanos = cycles * (1_000_000_000u64 / self.clock_speed);
+            let end = Instant::now();
+            std::thread::sleep(Duration::from_nanos(sleep_nanos).saturating_sub(end - start));
         }
     }
 
-    pub fn single_step(&mut self) {
+    pub fn single_step(&mut self) -> u64 {
         let mut memory_bus = self.create_memory_bus();
         let cycles = self.cpu.single_step(&mut memory_bus);
-        self.cycle_count += cycles;
 
         let interrupts = self.tick_hardware(cycles);
         self.cpu.request_interrupts(&mut memory_bus, &interrupts);
+        cycles
     }
 
     pub fn tick_hardware(&mut self, cycles: u64) -> InterruptRequest {
         let mut interrupts = InterruptRequest::default();
 
-        interrupts.serial = self.serial.borrow_mut().tick(cycles);
-        let vblank_and_stat = self.lcd.borrow_mut().tick(cycles);
+        interrupts.serial = self.serial.lock().unwrap().tick(cycles);
+        let mut lcd = self.lcd.lock().unwrap();
+        let vblank_and_stat = self.ppu.lock().unwrap().tick(cycles, &mut *&mut lcd);
         interrupts.vblank = vblank_and_stat.0;
         interrupts.stat = vblank_and_stat.1;
-        interrupts.timer = self.timer_control.borrow_mut().tick(cycles);
+        interrupts.timer = self.timer_control.lock().unwrap().tick(cycles);
+
+        // Update framebuffer on vblank
+        if interrupts.vblank {
+            let mut f = self.framebuffer.lock().unwrap();
+            *f = *self.ppu.lock().unwrap().get_current_framebuffer();
+        }
 
         interrupts
+    }
+
+    pub fn get_current_framebuffer(&self) -> [[Color; 160]; 144] {
+        self.ppu.lock().unwrap().get_current_framebuffer().clone()
     }
 
     pub fn dump_cpu_state(&self) {
@@ -191,7 +200,11 @@ impl Gbc {
     pub fn dump_state(&self) {
         println!(
             "GBC State: {}",
-            if self.running { "Running" } else { "Stopped" }
+            if self.running.load(Ordering::Relaxed) {
+                "Running"
+            } else {
+                "Stopped"
+            }
         );
         self.cpu.dump_state();
         println!("\tCycles run: {}", self.cycle_count);
@@ -236,7 +249,7 @@ impl Gbc {
         memory_bus.read_mem(address, length)
     }
 
-    pub fn get_cartridge(&self) -> Rc<RefCell<Cartridge>> {
+    pub fn get_cartridge(&self) -> Arc<Mutex<Cartridge>> {
         self.cartridge.clone()
     }
 }

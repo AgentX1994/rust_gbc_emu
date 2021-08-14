@@ -1,12 +1,16 @@
+use crate::gbc::mmio::lcd::Color;
+
+use super::mmio::lcd::{Lcd, TileMap};
+
 #[derive(Copy, Clone, Debug)]
-pub enum Color {
+pub enum ColorIndex {
     Color0,
     Color1,
     Color2,
     Color3,
 }
 
-impl Color {
+impl ColorIndex {
     pub fn new(color: u8) -> Self {
         match color {
             0 => Self::Color0,
@@ -18,7 +22,7 @@ impl Color {
     }
 }
 
-impl Default for Color {
+impl Default for ColorIndex {
     fn default() -> Self {
         Self::Color0
     }
@@ -30,41 +34,54 @@ pub struct Tile {
 }
 
 impl Tile {
-    pub fn deinterleave(&self) -> [Color; 64] {
-        let mut colors = [Color::default(); 64];
+    fn get_color(&self, x: u8, y: u8) -> ColorIndex {
+        assert!(x < 8);
+        assert!(y < 8);
+
+        let bit_index = 7 - x;
+        let index = 2 * y;
+        let byte1 = self.lines[index as usize];
+        let byte2 = self.lines[(index + 1) as usize];
+        let bit1 = (byte1 >> bit_index) & 1;
+        let bit2 = (byte2 >> bit_index) & 1;
+        ColorIndex::new((bit2 << 1) | bit1)
+    }
+
+    pub fn deinterleave(&self) -> [ColorIndex; 64] {
+        let mut colors = [ColorIndex::default(); 64];
         for i in (0..16).step_by(2) {
             let mut byte0 = self.lines[i];
             let mut byte1 = self.lines[i + 1];
 
-            colors[i * 8 + 0] = Color::new(((byte1 & 1) << 1) | (byte0 & 1));
+            colors[i * 8 + 0] = ColorIndex::new(((byte1 & 1) << 1) | (byte0 & 1));
             byte0 >>= 1;
             byte1 >>= 1;
 
-            colors[i * 8 + 1] = Color::new(((byte1 & 1) << 1) | (byte0 & 1));
+            colors[i * 8 + 1] = ColorIndex::new(((byte1 & 1) << 1) | (byte0 & 1));
             byte0 >>= 1;
             byte1 >>= 1;
 
-            colors[i * 8 + 2] = Color::new(((byte1 & 1) << 1) | (byte0 & 1));
+            colors[i * 8 + 2] = ColorIndex::new(((byte1 & 1) << 1) | (byte0 & 1));
             byte0 >>= 1;
             byte1 >>= 1;
 
-            colors[i * 8 + 3] = Color::new(((byte1 & 1) << 1) | (byte0 & 1));
+            colors[i * 8 + 3] = ColorIndex::new(((byte1 & 1) << 1) | (byte0 & 1));
             byte0 >>= 1;
             byte1 >>= 1;
 
-            colors[i * 8 + 4] = Color::new(((byte1 & 1) << 1) | (byte0 & 1));
+            colors[i * 8 + 4] = ColorIndex::new(((byte1 & 1) << 1) | (byte0 & 1));
             byte0 >>= 1;
             byte1 >>= 1;
 
-            colors[i * 8 + 5] = Color::new(((byte1 & 1) << 1) | (byte0 & 1));
+            colors[i * 8 + 5] = ColorIndex::new(((byte1 & 1) << 1) | (byte0 & 1));
             byte0 >>= 1;
             byte1 >>= 1;
 
-            colors[i * 8 + 6] = Color::new(((byte1 & 1) << 1) | (byte0 & 1));
+            colors[i * 8 + 6] = ColorIndex::new(((byte1 & 1) << 1) | (byte0 & 1));
             byte0 >>= 1;
             byte1 >>= 1;
 
-            colors[i * 8 + 7] = Color::new(((byte1 & 1) << 1) | (byte0 & 1));
+            colors[i * 8 + 7] = ColorIndex::new(((byte1 & 1) << 1) | (byte0 & 1));
         }
         colors
     }
@@ -76,9 +93,18 @@ pub enum TileAddressingMethod {
     From9000(i8),
 }
 
+impl TileAddressingMethod {
+    fn set_offset(&mut self, offset: u8) {
+        match self {
+            TileAddressingMethod::From8000(ref mut o) => *o = offset,
+            TileAddressingMethod::From9000(ref mut i) => *i = offset as i8,
+        }
+    }
+}
+
 impl From<bool> for TileAddressingMethod {
     fn from(v: bool) -> Self {
-        if v {
+        if !v {
             Self::From9000(0)
         } else {
             Self::From8000(0)
@@ -296,7 +322,7 @@ impl Sprite {
             1 => self.x,
             2 => self.tile_number,
             3 => self.attributes.into(),
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 
@@ -306,7 +332,7 @@ impl Sprite {
             1 => self.x = byte,
             2 => self.tile_number = byte,
             3 => self.attributes = byte.into(),
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 }
@@ -336,11 +362,27 @@ impl ObjectAttributeMemory {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct PictureProcessingUnit {
     in_use_by_lcd: bool,
     video_ram: VideoRam,
     object_attribute_memory: ObjectAttributeMemory,
+    framebuffer1: [[Color; 160]; 144],
+    framebuffer2: [[Color; 160]; 144],
+    framebuffer_selector: bool,
+}
+
+impl Default for PictureProcessingUnit {
+    fn default() -> Self {
+        Self {
+            in_use_by_lcd: false,
+            video_ram: VideoRam::default(),
+            object_attribute_memory: ObjectAttributeMemory::default(),
+            framebuffer1: [[Color::White; 160]; 144],
+            framebuffer2: [[Color::White; 160]; 144],
+            framebuffer_selector: false
+        }
+    }
 }
 
 impl PictureProcessingUnit {
@@ -372,5 +414,97 @@ impl PictureProcessingUnit {
 
     pub fn set_in_use_by_lcd(&mut self, in_use: bool) {
         self.in_use_by_lcd = in_use;
+    }
+
+    fn get_color_at_pixel_using_tilemap(
+        &self,
+        x: u8,
+        y: u8,
+        selected_map: TileMap,
+        mut addressing_mode: TileAddressingMethod,
+    ) -> ColorIndex {
+        let tilemap = match selected_map {
+            TileMap::From9800 => &self.video_ram.background_map_0,
+            TileMap::From9C00 => &self.video_ram.background_map_1,
+        };
+        let map_x = x / 8;
+        let map_y = y / 8;
+        let tile_index = tilemap[32 * map_y as usize + map_x as usize];
+
+        addressing_mode.set_offset(tile_index);
+        let tile = self.video_ram.read_tile(addressing_mode);
+
+        let tile_x = x % 8;
+        let tile_y = y % 8;
+        tile.get_color(tile_x, tile_y)
+    }
+
+    pub fn tick(&mut self, cycles: u64, lcd: &mut Lcd) -> (bool, bool) {
+        let mut vblank_interrupt = false;
+        let mut stat_interrupt = false;
+
+        for _ in 0..cycles {
+            let x_u16 = lcd.get_lx();
+            let y = lcd.get_ly();
+
+            if x_u16 < 160 && y < 144 {
+                let x = x_u16 as u8;
+                let addressing_mode = lcd.get_addressing_mode();
+                let bg_window_priority = lcd.get_background_window_priority();
+
+                // draw background
+                let (scroll_x, scroll_y) = lcd.get_scroll_offsets();
+                let bg_x = scroll_x.wrapping_add(x);
+                let bg_y = scroll_y.wrapping_add(y);
+                let bg_tile_map = lcd.get_background_tile_map();
+                let palette = lcd.get_background_palette();
+
+                // If this is not true, the background and window should display as white
+                if bg_window_priority {
+                    let bg_color =
+                        self.get_color_at_pixel_using_tilemap(bg_x, bg_y, bg_tile_map, addressing_mode);
+                    let color = palette.get_color(&bg_color);
+                    self.write_to_framebuffer(x as usize, y as usize, color);
+                    //framebuffer[y as usize][x as usize] = Self::color_to_u32(&color);
+                } else {
+                    self.write_to_framebuffer(x as usize, y as usize, Color::White);
+                    //framebuffer[y as usize][x as usize] = Self::color_to_u32(&Color::White);
+                }
+
+                // draw window
+
+                // draw objects
+            }
+
+            let interrupts = lcd.tick();
+            if interrupts.0 {
+                self.framebuffer_selector ^= true;
+            }
+            vblank_interrupt = vblank_interrupt | interrupts.0;
+            stat_interrupt = stat_interrupt | interrupts.1;
+        }
+
+        (vblank_interrupt, stat_interrupt)
+    }
+
+    fn write_to_framebuffer(&mut self, x: usize, y: usize, color: Color) {
+        let framebuffer = self.get_current_framebuffer_mut();
+        framebuffer[y][x] = color;
+    }
+
+    pub fn get_current_framebuffer_mut(&mut self) -> &mut [[Color; 160]; 144] {
+        if !self.framebuffer_selector {
+            &mut self.framebuffer1
+        } else {
+            &mut self.framebuffer2
+        }
+    }
+
+    pub fn get_current_framebuffer(&self) -> &[[Color; 160]; 144] {
+        if !self.framebuffer_selector {
+            &self.framebuffer1
+        } else {
+            &self.framebuffer2
+        }
     }
 }
