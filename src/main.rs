@@ -63,25 +63,27 @@ fn run(
         };
 
         // TODO other formats
-        texture.with_lock(None, |data, pitch| {
-            let mut row_i = 0;
-            for row in framebuffer {
-                let mut i = row_i;
-                for pixel in row {
-                    let bytes = match pixel {
-                        lcd::Color::White => [0xff, 0xff, 0xff],
-                        lcd::Color::LightGray => [0xaa, 0xaa, 0xaa],
-                        lcd::Color::DarkGray => [0x77, 0x77, 0x77],
-                        lcd::Color::Black => [0x00, 0x00, 0x00],
-                    };
-                    data[i] = bytes[0];
-                    data[i + 1] = bytes[1];
-                    data[i + 2] = bytes[2];
-                    i += 4;
+        texture
+            .with_lock(None, |data, pitch| {
+                let mut row_i = 0;
+                for row in framebuffer {
+                    let mut i = row_i;
+                    for pixel in row {
+                        let bytes = match pixel {
+                            lcd::Color::White => [0xff, 0xff, 0xff],
+                            lcd::Color::LightGray => [0xaa, 0xaa, 0xaa],
+                            lcd::Color::DarkGray => [0x77, 0x77, 0x77],
+                            lcd::Color::Black => [0x00, 0x00, 0x00],
+                        };
+                        data[i] = bytes[0];
+                        data[i + 1] = bytes[1];
+                        data[i + 2] = bytes[2];
+                        i += 4;
+                    }
+                    row_i += pitch;
                 }
-                row_i += pitch;
-            }
-        }).unwrap();
+            })
+            .unwrap();
 
         // for row in 0..144u32 {
         //     for col in 0..160u32 {
@@ -116,12 +118,19 @@ fn main() {
                 .long("instructions")
                 .help("Shows each instruction as it's executed"),
         )
+        .arg(
+            Arg::with_name("turbo")
+                .short("t")
+                .long("turbo")
+                .help("Removes limits on run speed"),
+        )
         .arg(Arg::with_name("ROM").required(true).index(1))
         .get_matches();
 
     let rom = matches.value_of("ROM").unwrap().to_string();
     let show_instructions = matches.is_present("instructions");
     let debug = matches.is_present("debug");
+    let turbo = matches.is_present("turbo");
 
     let gbc_running = Arc::new(AtomicBool::new(false));
     let framebuffer = Arc::new(Mutex::new([[lcd::Color::White; 160]; 144]));
@@ -143,8 +152,14 @@ fn main() {
     let gbc_running_gbc = gbc_running.clone();
     let framebuffer_gbc = framebuffer.clone();
     let t = thread::spawn(move || {
-        let mut gbc = Gbc::new(rom, framebuffer_gbc, gbc_running_gbc, show_instructions)
-            .expect("Error Loading rom!");
+        let mut gbc = Gbc::new(
+            rom,
+            framebuffer_gbc,
+            gbc_running_gbc,
+            turbo,
+            show_instructions,
+        )
+        .expect("Error Loading rom!");
         if debug {
             run_debugger(gbc);
             event_sender

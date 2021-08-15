@@ -28,6 +28,7 @@ use self::cpu::InterruptRequest;
 #[derive(Debug)]
 pub struct Gbc {
     running: Arc<AtomicBool>,
+    turbo: bool,
     framebuffer: Arc<Mutex<[[Color; 160]; 144]>>,
     clock_speed: u64, // HZ
     cpu: Cpu,
@@ -42,6 +43,7 @@ impl Gbc {
         rom_path: P,
         framebuffer: Arc<Mutex<[[Color; 160]; 144]>>,
         running: Arc<AtomicBool>,
+        turbo: bool,
         show_instructions: bool,
     ) -> io::Result<Self> {
         let cartridge = Cartridge::new(rom_path)?;
@@ -63,6 +65,7 @@ impl Gbc {
         let interrupt_enable = 0;
         Ok(Gbc {
             running,
+            turbo,
             framebuffer,
             clock_speed: 4194304, // TODO switch based on detected cartridge / config
             cpu: Cpu::new(show_instructions),
@@ -137,15 +140,19 @@ impl Gbc {
     pub fn run(&mut self) -> u64 {
         self.running.store(true, Ordering::Relaxed);
         let mut cycles_in_this_run = 0;
+        let mut start = Instant::now();
         while self.running.load(Ordering::Relaxed) {
-            let start = Instant::now();
             let cycles = self.single_step();
             self.cycle_count += cycles;
             cycles_in_this_run += cycles;
             self.check_execute_breakpoints();
-            let sleep_nanos = cycles * (1_000_000_000u64 / self.clock_speed);
-            let end = Instant::now();
-            std::thread::sleep(Duration::from_nanos(sleep_nanos).saturating_sub(end - start));
+            let desired_iteration_time =
+                Duration::from_nanos(cycles * (1_000_000_000u64 / self.clock_speed));
+            let next_cycle_time = start + desired_iteration_time;
+            if !self.turbo {
+                while Instant::now() < next_cycle_time {}
+            }
+            start = Instant::now();
         }
         cycles_in_this_run
     }
@@ -154,7 +161,8 @@ impl Gbc {
         let cycles = self.cpu.single_step(&mut self.memory_bus);
 
         let interrupts = self.tick_hardware(cycles);
-        self.cpu.request_interrupts(&mut self.memory_bus, &interrupts);
+        self.cpu
+            .request_interrupts(&mut self.memory_bus, &interrupts);
         cycles
     }
 
@@ -219,7 +227,9 @@ impl Gbc {
         };
 
         for _ in 0..length {
-            let insn = self.cpu.get_instruction_at_address(&self.memory_bus, address);
+            let insn = self
+                .cpu
+                .get_instruction_at_address(&self.memory_bus, address);
             println!("{}", insn);
             address += insn.size() as u16;
         }
