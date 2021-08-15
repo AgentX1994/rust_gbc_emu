@@ -81,7 +81,8 @@ impl Cpu {
             //     Self::interrupt_number_to_string(interrupt_number)
             // );
             self.state = CpuState::Running;
-        } else if self.state == CpuState::Stopped && interrupt_number == 4 && this_interrupt_enabled {
+        } else if self.state == CpuState::Stopped && interrupt_number == 4 && this_interrupt_enabled
+        {
             // Joypad can interrupt from Stopped
             self.state = CpuState::Running;
         }
@@ -113,8 +114,7 @@ impl Cpu {
     }
 
     pub fn get_instruction_at_address(&self, memory_bus: &MemoryBus, address: u16) -> Instruction {
-        let insn_bytes = memory_bus.read_mem(address, 3);
-        Instruction::new(address, &insn_bytes[..])
+        Instruction::new(address, memory_bus)
     }
 
     pub fn get_next_instruction(&self, memory_bus: &MemoryBus) -> Instruction {
@@ -139,7 +139,7 @@ impl Cpu {
     }
 
     fn execute_instruction(&mut self, memory_bus: &mut MemoryBus, insn: Instruction) -> u64 {
-        self.pc += insn.size as u16;
+        self.pc += insn.size() as u16;
 
         match insn.op {
             Opcode::Unknown { opcode: _ } => panic!("Unknown instruction! {}", insn),
@@ -189,7 +189,7 @@ impl Cpu {
                             let v = {
                                 let hl = self.hl.get_u16_mut();
                                 let temp = memory_bus.read_u8(*hl);
-                                *hl += 1;
+                                *hl = hl.wrapping_add(1);
                                 temp
                             };
                             self.set_a(v);
@@ -1084,13 +1084,13 @@ impl Cpu {
     }
 
     fn push(&mut self, memory_bus: &mut MemoryBus, v: u16) {
-        self.sp -= 2;
+        self.sp = self.sp.wrapping_sub(2);
         memory_bus.write_mem(self.sp, &v.to_le_bytes()[..]);
     }
 
     fn pop(&mut self, memory_bus: &mut MemoryBus) -> u16 {
         let v = memory_bus.read_mem(self.sp, 2);
-        self.sp += 2;
+        self.sp = self.sp.wrapping_add(2);
         assert!(v.len() == 2);
         ((v[1] as u16) << 8) | (v[0] as u16)
     }
@@ -1453,25 +1453,26 @@ mod tests {
 
     fn create_default_memory_bus() -> MemoryBus {
         use crate::gbc::cartridge::Cartridge;
-        use crate::gbc::mmio::{apu::Sound, joypad::Joypad, lcd::Lcd, serial::SerialComms, timer::Timer};
+        use crate::gbc::mmio::{
+            apu::Sound, joypad::Joypad, lcd::Lcd, serial::SerialComms, timer::Timer,
+        };
         use crate::gbc::ppu::PictureProcessingUnit;
-        use std::sync::{Arc, Mutex};
-        let cartridge = Arc::new(Mutex::new(Cartridge::default()));
-        let ram = Arc::new(Mutex::new([0u8; 8192]));
-        let ppu = Arc::new(Mutex::new(PictureProcessingUnit::default()));
-        let joypad = Arc::new(Mutex::new(Joypad::default()));
-        let serial =  Arc::new(Mutex::new(SerialComms::default()));
-        let timer_control =  Arc::new(Mutex::new(Timer::default()));
-        let sound =  Arc::new(Mutex::new(Sound::default()));
-        let lcd =  Arc::new(Mutex::new(Lcd::default()));
-        let vram_select =  Arc::new(Mutex::new(0));
-        let disable_boot_rom =  Arc::new(Mutex::new(false));
-        let vram_dma =  Arc::new(Mutex::new([0; 4]));
-        let color_palettes =  Arc::new(Mutex::new([0; 2]));
-        let wram_bank_select =  Arc::new(Mutex::new(0));
-        let interrupt_flags =  Arc::new(Mutex::new(0));
-        let high_ram = Arc::new(Mutex::new([0u8; 127]));
-        let interrupt_enable = Arc::new(Mutex::new(0u8));
+        let cartridge = Cartridge::default();
+        let ram = [0u8; 8192];
+        let ppu = PictureProcessingUnit::default();
+        let joypad = Joypad::default();
+        let serial = SerialComms::default();
+        let timer_control = Timer::default();
+        let sound = Sound::default();
+        let lcd = Lcd::default();
+        let vram_select = 0;
+        let disable_boot_rom = false;
+        let vram_dma = [0; 4];
+        let color_palettes = [0; 2];
+        let wram_bank_select = 0;
+        let interrupt_flags = 0;
+        let high_ram = [0u8; 127];
+        let interrupt_enable = 0u8;
 
         MemoryBus::new(
             cartridge,
@@ -1491,7 +1492,7 @@ mod tests {
             high_ram,
             interrupt_enable,
         )
-            }
+    }
 
     #[test]
     fn test_default_cpu() {
@@ -1510,7 +1511,6 @@ mod tests {
             Instruction {
                 address: 0,
                 op: Opcode::Unknown { opcode: 0 },
-                size: 1,
             },
         );
     }
@@ -1596,7 +1596,6 @@ mod tests {
                 register: Register::Sp,
                 operand: Operand::I8(-1),
             },
-            size: 2,
         };
         cpu.sp = 0x8000;
         cpu.execute_instruction(&mut memory_bus, insn);
@@ -1612,7 +1611,6 @@ mod tests {
                 register: Register::Sp,
                 operand: Operand::I8(-2),
             },
-            size: 2,
         };
         cpu.sp = 0x8000;
         cpu.execute_instruction(&mut memory_bus, insn);
@@ -1628,7 +1626,6 @@ mod tests {
                 register: Register::Sp,
                 operand: Operand::I8(2),
             },
-            size: 2,
         };
         cpu.sp = 0x8000;
         cpu.execute_instruction(&mut memory_bus, insn);
@@ -1664,7 +1661,6 @@ mod tests {
             op: Opcode::Pop {
                 register: Register::Af,
             },
-            size: 1,
         };
         assert_eq!(cpu.af.get_u16(), 0x01b0);
         cpu.execute_instruction(&mut memory_bus, insn);
@@ -1685,7 +1681,6 @@ mod tests {
                 Instruction {
                     address: 0,
                     op: Opcode::Rlca,
-                    size: 1,
                 },
             );
             let a = cpu.get_a();
@@ -1725,7 +1720,6 @@ mod tests {
                     op: Opcode::Sub {
                         operand: Operand::U8(imm),
                     },
-                    size: 2,
                 };
 
                 cpu.set_a(a);
@@ -1784,7 +1778,6 @@ mod tests {
                         op: Opcode::Sbc {
                             operand: Operand::U8(imm),
                         },
-                        size: 2,
                     };
 
                     cpu.set_a(a);

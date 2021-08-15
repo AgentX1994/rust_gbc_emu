@@ -1,5 +1,7 @@
-use core::{fmt, panic};
-use std::{fmt::Display, mem, u16};
+use core::fmt;
+use std::{fmt::Display, mem};
+
+use crate::gbc::memory_bus::MemoryBus;
 
 #[derive(Debug, PartialEq)]
 pub enum Register {
@@ -317,6 +319,155 @@ impl Opcode {
             Opcode::Ei => format!("ei"),
         }
     }
+
+    fn size(&self) -> u8 {
+        match self {
+            Opcode::Unknown { .. } => 1,
+            Opcode::Nop => 1,
+            Opcode::Stop => 2,
+            Opcode::Halt => 1,
+            Opcode::Ld8 {
+                destination,
+                source,
+            } => {
+                if let Operand::U8(..) = source {
+                    2
+                } else if let Operand::Deref(DerefOperand::Ff00Offset(..)) = source {
+                    2
+                } else if let Operand::Deref(DerefOperand::Address(..)) = source {
+                    3
+                } else if let Operand::Deref(DerefOperand::Address(..)) = destination {
+                    3
+                } else if let Operand::Deref(DerefOperand::Ff00Offset(..)) = destination {
+                    2
+                } else {
+                    1
+                }
+            }
+            Opcode::Ld16 {
+                destination,
+                source,
+            } => {
+                if let Operand::Deref(DerefOperand::Address(..)) = destination {
+                    3
+                } else if let Operand::U16(..) = source {
+                    3
+                } else if let Operand::StackOffset(..) = source {
+                    2
+                }else {
+                    1
+                }
+            }
+            Opcode::Jp { destination } => {
+                if let Operand::Register(Register::Hl) = destination {
+                    1
+                } else {
+                    3
+                }
+            }
+            Opcode::JpCond { .. } => 3,
+            Opcode::Jr { .. } => 2,
+            Opcode::JrCond { .. } => 2,
+            Opcode::Call { .. } => 3,
+            Opcode::CallCond { .. } => 3,
+            Opcode::Ret => 1,
+            Opcode::RetCond { .. } => 1,
+            Opcode::Reti => 1,
+            Opcode::Pop { .. } => 1,
+            Opcode::Push { .. } => 1,
+            Opcode::Rst { .. } => 1,
+            Opcode::Bit { .. } => 2,
+            Opcode::Res { .. } => 2,
+            Opcode::Set { .. } => 2,
+            Opcode::Add8 { operand } => {
+                if let Operand::U8(..) = operand {
+                    2
+                } else {
+                    1
+                }
+            }
+            Opcode::Add16 { operand, .. } => {
+                if let Operand::I8(..) = operand {
+                    2
+                } else if let Operand::StackOffset(..) = operand {
+                    2
+                } else {
+                    1
+                }
+            },
+            Opcode::Inc { .. } => 1,
+            Opcode::Inc16 { .. } => 1,
+            Opcode::Dec { .. } => 1,
+            Opcode::Dec16 { .. } => 1,
+            Opcode::Adc { operand } => {
+                if let Operand::U8(..) = operand {
+                    2
+                } else {
+                    1
+                }
+            }
+            Opcode::Sub { operand } => {
+                if let Operand::U8(..) = operand {
+                    2
+                } else {
+                    1
+                }
+            }
+            Opcode::Sbc { operand } => {
+                if let Operand::U8(..) = operand {
+                    2
+                } else {
+                    1
+                }
+            }
+            Opcode::And { operand } => {
+                if let Operand::U8(..) = operand {
+                    2
+                } else {
+                    1
+                }
+            }
+            Opcode::Xor { operand } => {
+                if let Operand::U8(..) = operand {
+                    2
+                } else {
+                    1
+                }
+            }
+            Opcode::Or { operand } => {
+                if let Operand::U8(..) = operand {
+                    2
+                } else {
+                    1
+                }
+            }
+            Opcode::Cp { operand } => {
+                if let Operand::U8(..) = operand {
+                    2
+                } else {
+                    1
+                }
+            }
+            Opcode::Cpl => 1,
+            Opcode::Daa => 1,
+            Opcode::Rlca => 1,
+            Opcode::Rla => 1,
+            Opcode::Rrca => 1,
+            Opcode::Rra => 1,
+            Opcode::Rlc { .. } => 2,
+            Opcode::Rl { .. } => 2,
+            Opcode::Rrc { .. } => 2,
+            Opcode::Rr { .. } => 2,
+            Opcode::Sla { .. } => 2,
+            Opcode::Swap { .. } => 2,
+            Opcode::Sra { .. } => 2,
+            Opcode::Srl { .. } => 2,
+            Opcode::Scf => 1,
+            Opcode::Ccf => 1,
+            Opcode::Di => 1,
+            Opcode::Ei => 1,
+        }
+    }
 }
 
 fn make_u16(low: u8, high: u8) -> u16 {
@@ -327,715 +478,3403 @@ fn make_i8(v: u8) -> i8 {
     unsafe { mem::transmute(v) }
 }
 
-fn make_cond(byte: u8) -> ConditionType {
-    let v = (byte >> 3) & 0b11;
-    match v {
-        0 => ConditionType::NonZero,
-        1 => ConditionType::Zero,
-        2 => ConditionType::NotCarry,
-        3 => ConditionType::Carry,
-        _ => panic!("Unknown condition code {}!", v),
-    }
-}
-
-fn make_operand_from_r8(byte: u8, lower_3_bits: bool) -> Operand {
-    let v: u8;
-    if lower_3_bits {
-        v = byte & 0b111;
-    } else {
-        v = (byte >> 3) & 0b111;
-    }
-    match v {
-        0 => Operand::Register(Register::B),
-        1 => Operand::Register(Register::C),
-        2 => Operand::Register(Register::D),
-        3 => Operand::Register(Register::E),
-        4 => Operand::Register(Register::H),
-        5 => Operand::Register(Register::L),
-        6 => Operand::Deref(DerefOperand::Register(Register::Hl)),
-        7 => Operand::Register(Register::A),
-        _ => panic!("Unknown r8 {}!", v),
-    }
-}
-
-fn make_r16(byte: u8, group: u8) -> Register {
-    let v = (byte >> 4) & 0b11;
-    assert!(group < 4);
-    assert!(v < 4);
-    let r = match v {
-        0 => Register::Bc,
-        1 => Register::De,
-        2 => match group {
-            1 | 3 => Register::Hl,
-            2 => Register::HlPlus,
-            _ => unreachable!(),
-        },
-        3 => match group {
-            1 => Register::Sp,
-            2 => Register::HlMinus,
-            3 => Register::Af,
-            _ => unreachable!(),
-        },
-        _ => unreachable!(),
-    };
-
-    r
-}
-
-fn get_subopcode(byte: u8) -> u8 {
-    (byte >> 3) & 0b111
-}
-
-fn get_exp(byte: u8) -> u8 {
-    let v = (byte >> 3) & 0b11;
-    v * 8
-}
-
-fn get_bit(byte: u8) -> u8 {
-    (byte >> 3) & 0b111
-}
-
-// Helper functions for instruction decoding
-/// Match given byte against opcode, masking out
-/// the condition
-fn match_cond_mask(byte: u8, opcode: u8) -> bool {
-    (byte & 0b11100111) == opcode
-}
-
-/// Match given byte against opcode, masking out
-/// the r16
-fn match_r16_mask(byte: u8, opcode: u8) -> bool {
-    (byte & 0b11001111) == opcode
-}
-
-/// Match given byte against opcode, masking out
-/// the r8
-fn match_r8_mask(byte: u8, opcode: u8) -> bool {
-    (byte & 0b11000111) == opcode
-}
-
-/// Match given byte against opcode, masking out
-/// the two r8s
-fn match_two_r8_mask(byte: u8, opcode: u8) -> bool {
-    (byte & 0b11000000) == opcode
-}
-
-/// Match given byte against opcode, masking out
-/// the subopcode and r8
-fn match_subopcode_r8_mask(byte: u8, opcode: u8) -> bool {
-    (byte & 0b11000000) == opcode
-}
-
-/// Match given byte against opcode, masking out
-/// the subopcode
-fn match_subopcode_mask(byte: u8, opcode: u8) -> bool {
-    (byte & 0b11000111) == opcode
-}
-
-/// Match given byte against opcode, masking out
-/// the exp
-fn match_exp_mask(byte: u8, opcode: u8) -> bool {
-    (byte & 0b11000111) == opcode
-}
-
 #[derive(Debug)]
 pub struct Instruction {
     pub address: u16,
     pub op: Opcode,
-    pub size: u8,
 }
 
 impl Instruction {
-    pub fn new(address: u16, raw_bytes: &[u8]) -> Self {
-        let byte = raw_bytes[0];
+    pub fn size(&self) -> u8 {
+        self.op.size()
+    }
 
-        // Check for 0xcb prefix instructions
-        if byte == 0xcb {
-            let byte = raw_bytes[1];
-            return match byte >> 6 {
-                0 => {
-                    // Opcode (group 3)
-                    let register = make_operand_from_r8(byte, true);
-                    match get_subopcode(byte) {
-                        0 => Instruction {
-                            address,
-                            op: Opcode::Rlc { operand: register },
-                            size: 2,
-                        },
-                        1 => Instruction {
-                            address,
-                            op: Opcode::Rrc { operand: register },
-                            size: 2,
-                        },
-                        2 => Instruction {
-                            address,
-                            op: Opcode::Rl { operand: register },
-                            size: 2,
-                        },
-                        3 => Instruction {
-                            address,
-                            op: Opcode::Rr { operand: register },
-                            size: 2,
-                        },
-                        4 => Instruction {
-                            address,
-                            op: Opcode::Sla { operand: register },
-                            size: 2,
-                        },
-                        5 => Instruction {
-                            address,
-                            op: Opcode::Sra { operand: register },
-                            size: 2,
-                        },
-                        6 => Instruction {
-                            address,
-                            op: Opcode::Swap { operand: register },
-                            size: 2,
-                        },
-                        7 => Instruction {
-                            address,
-                            op: Opcode::Srl { operand: register },
-                            size: 2,
-                        },
-                        _ => unreachable!(),
-                    }
-                }
-                1 => Instruction {
-                    address,
-                    op: Opcode::Bit {
-                        bit: get_bit(byte),
-                        destination: make_operand_from_r8(byte, true),
-                    },
-                    size: 2,
-                },
-                2 => Instruction {
-                    address,
-                    op: Opcode::Res {
-                        bit: get_bit(byte),
-                        destination: make_operand_from_r8(byte, true),
-                    },
-                    size: 2,
-                },
-                3 => Instruction {
-                    address,
-                    op: Opcode::Set {
-                        bit: get_bit(byte),
-                        destination: make_operand_from_r8(byte, true),
-                    },
-                    size: 2,
-                },
-                _ => unreachable!(),
-            };
-        }
+    pub fn new(address: u16, memory_bus: &MemoryBus) -> Self {
+        let byte = memory_bus.read_u8(address);
 
-        // match the simple opcodes
         match byte {
-            0 => {
-                return Instruction {
-                    address,
-                    op: Opcode::Nop,
-                    size: 1,
-                }
-            }
-            8 => {
-                return Instruction {
-                    address,
-                    op: Opcode::Ld16 {
-                        destination: Operand::Deref(DerefOperand::Address(make_u16(
-                            raw_bytes[1],
-                            raw_bytes[2],
-                        ))),
-                        source: Operand::Register(Register::Sp),
-                    },
-                    size: 3,
-                }
-            }
-            16 => {
-                return Instruction {
-                    address,
-                    op: Opcode::Stop,
-                    size: 1,
-                }
-            }
-            24 => {
-                return Instruction {
-                    address,
-                    op: Opcode::Jr {
-                        offset: make_i8(raw_bytes[1]),
-                    },
-                    size: 2,
-                }
-            }
-            118 => {
-                return Instruction {
-                    address,
-                    op: Opcode::Halt,
-                    size: 1,
-                }
-            }
-            201 => {
-                return Instruction {
-                    address,
-                    op: Opcode::Ret,
-                    size: 1,
-                }
-            }
-            205 => {
-                return Instruction {
-                    address,
-                    op: Opcode::Call {
-                        destination: make_u16(raw_bytes[1], raw_bytes[2]),
-                    },
-                    size: 3,
-                }
-            }
-            224 => {
-                return Instruction {
-                    address,
-                    op: Opcode::Ld8 {
-                        destination: Operand::Deref(DerefOperand::Ff00Offset(raw_bytes[1])),
-                        source: Operand::Register(Register::A),
-                    },
-                    size: 2,
-                }
-            }
-            226 => {
-                return Instruction {
-                    address,
-                    op: Opcode::Ld8 {
-                        destination: Operand::Deref(DerefOperand::Ff00PlusC),
-                        source: Operand::Register(Register::A),
-                    },
-                    size: 1,
-                }
-            }
-            232 => {
-                return Instruction {
-                    address,
-                    op: Opcode::Add16 {
-                        register: Register::Sp,
-                        operand: Operand::I8(make_i8(raw_bytes[1])),
-                    },
-                    size: 2,
-                }
-            }
-            234 => {
-                return Instruction {
-                    address,
-                    op: Opcode::Ld8 {
-                        destination: Operand::Deref(DerefOperand::Address(make_u16(
-                            raw_bytes[1],
-                            raw_bytes[2],
-                        ))),
-                        source: Operand::Register(Register::A),
-                    },
-                    size: 3,
-                }
-            }
-            240 => {
-                return Instruction {
-                    address,
-                    op: Opcode::Ld8 {
-                        destination: Operand::Register(Register::A),
-                        source: Operand::Deref(DerefOperand::Ff00Offset(raw_bytes[1])),
-                    },
-                    size: 2,
-                }
-            }
-            242 => {
-                return Instruction {
-                    address,
-                    op: Opcode::Ld8 {
-                        destination: Operand::Register(Register::A),
-                        source: Operand::Deref(DerefOperand::Ff00PlusC),
-                    },
-                    size: 1,
-                }
-            }
-            248 => {
-                return Instruction {
-                    address,
-                    op: Opcode::Ld16 {
-                        destination: Operand::Register(Register::Hl),
-                        source: Operand::StackOffset(make_i8(raw_bytes[1])),
-                    },
-                    size: 2,
-                }
-            }
-            250 => {
-                return Instruction {
-                    address,
-                    op: Opcode::Ld8 {
-                        destination: Operand::Register(Register::A),
-                        source: Operand::Deref(DerefOperand::Address(make_u16(
-                            raw_bytes[1],
-                            raw_bytes[2],
-                        ))),
-                    },
-                    size: 3,
-                }
-            }
-            _ => (),
-        }
-
-        // Now decode more complicated instructions
-        if match_cond_mask(byte, 0b00100000) {
-            return Instruction {
+            0x00 => Instruction {
                 address,
-                op: Opcode::JrCond {
-                    condition: make_cond(byte),
-                    offset: make_i8(raw_bytes[1]),
-                },
-                size: 2,
-            };
-        } else if match_r16_mask(byte, 0b00000001) {
-            return Instruction {
+                op: Opcode::Nop,
+            },
+            0x01 => Instruction {
                 address,
                 op: Opcode::Ld16 {
-                    destination: Operand::Register(make_r16(byte, 1)),
-                    source: Operand::U16(make_u16(raw_bytes[1], raw_bytes[2])),
+                    destination: Operand::Register(Register::Bc),
+                    source: Operand::U16(make_u16(
+                        memory_bus.read_u8(address.wrapping_add(1)),
+                        memory_bus.read_u8(address.wrapping_add(2)),
+                    )),
                 },
-                size: 3,
-            };
-        } else if match_r16_mask(byte, 0b00000010) {
-            return Instruction {
+            },
+            0x02 => Instruction {
                 address,
                 op: Opcode::Ld8 {
-                    destination: Operand::Deref(DerefOperand::Register(make_r16(byte, 2))),
+                    destination: Operand::Deref(DerefOperand::Register(Register::Bc)),
                     source: Operand::Register(Register::A),
                 },
-                size: 1,
-            };
-        } else if match_r16_mask(byte, 0b00000011) {
-            return Instruction {
+            },
+            0x03 => Instruction {
                 address,
                 op: Opcode::Inc16 {
-                    register: make_r16(byte, 1),
+                    register: Register::Bc,
                 },
-                size: 1,
-            };
-        } else if match_r16_mask(byte, 0b00001001) {
-            return Instruction {
+            },
+            0x04 => Instruction {
+                address,
+                op: Opcode::Inc {
+                    operand: Operand::Register(Register::B),
+                },
+            },
+            0x05 => Instruction {
+                address,
+                op: Opcode::Dec {
+                    operand: Operand::Register(Register::B),
+                },
+            },
+            0x06 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::B),
+                    source: Operand::U8(memory_bus.read_u8(address.wrapping_add(1))),
+                },
+            },
+            0x07 => Instruction {
+                address,
+                op: Opcode::Rlca,
+            },
+            0x08 => Instruction {
+                address,
+                op: Opcode::Ld16 {
+                    destination: Operand::Deref(DerefOperand::Address(make_u16(
+                        memory_bus.read_u8(address.wrapping_add(1)),
+                        memory_bus.read_u8(address.wrapping_add(2)),
+                    ))),
+                    source: Operand::Register(Register::Sp),
+                },
+            },
+            0x09 => Instruction {
                 address,
                 op: Opcode::Add16 {
                     register: Register::Hl,
-                    operand: Operand::Register(make_r16(byte, 1)),
+                    operand: Operand::Register(Register::Bc),
                 },
-                size: 1,
-            };
-        } else if match_r16_mask(byte, 0b00001010) {
-            return Instruction {
+            },
+            0x0a => Instruction {
                 address,
                 op: Opcode::Ld8 {
                     destination: Operand::Register(Register::A),
-                    source: Operand::Deref(DerefOperand::Register(make_r16(byte, 2))),
+                    source: Operand::Deref(DerefOperand::Register(Register::Bc)),
                 },
-                size: 1,
-            };
-        } else if match_r16_mask(byte, 0b00001011) {
-            return Instruction {
+            },
+            0x0b => Instruction {
                 address,
                 op: Opcode::Dec16 {
-                    register: make_r16(byte, 1),
+                    register: Register::Bc,
                 },
-                size: 1,
-            };
-        } else if match_r8_mask(byte, 0b00000100) {
-            return Instruction {
+            },
+            0x0c => Instruction {
                 address,
                 op: Opcode::Inc {
-                    operand: make_operand_from_r8(byte, false),
+                    operand: Operand::Register(Register::C),
                 },
-                size: 1,
-            };
-        } else if match_r8_mask(byte, 0b00000101) {
-            return Instruction {
+            },
+            0x0d => Instruction {
                 address,
                 op: Opcode::Dec {
-                    operand: make_operand_from_r8(byte, false),
+                    operand: Operand::Register(Register::C),
                 },
-                size: 1,
-            };
-        } else if match_r8_mask(byte, 0b00000110) {
-            return Instruction {
+            },
+            0x0e => Instruction {
                 address,
                 op: Opcode::Ld8 {
-                    destination: make_operand_from_r8(byte, false),
-                    source: Operand::U8(raw_bytes[1]),
+                    destination: Operand::Register(Register::C),
+                    source: Operand::U8(memory_bus.read_u8(address.wrapping_add(1))),
                 },
-                size: 2,
-            };
-        } else if match_subopcode_mask(byte, 0b00000111) {
-            // Opcode Group 1
-            return match get_subopcode(byte) {
-                0 => Instruction {
+            },
+            0x0f => Instruction {
+                address,
+                op: Opcode::Rrca,
+            },
+            0x10 => {
+                let next_byte = memory_bus.read_u8(address.wrapping_add(1));
+                if next_byte != 0 {
+                    println!("Corrupted STOP!");
+                }
+                Instruction {
                     address,
-                    op: Opcode::Rlca,
-                    size: 1,
+                    op: Opcode::Stop,
+                }
+            }
+            0x11 => Instruction {
+                address,
+                op: Opcode::Ld16 {
+                    destination: Operand::Register(Register::De),
+                    source: Operand::U16(make_u16(
+                        memory_bus.read_u8(address.wrapping_add(1)),
+                        memory_bus.read_u8(address.wrapping_add(2)),
+                    )),
                 },
-                1 => Instruction {
-                    address,
-                    op: Opcode::Rrca,
-                    size: 1,
-                },
-                2 => Instruction {
-                    address,
-                    op: Opcode::Rla,
-                    size: 1,
-                },
-                3 => Instruction {
-                    address,
-                    op: Opcode::Rra,
-                    size: 1,
-                },
-                4 => Instruction {
-                    address,
-                    op: Opcode::Daa,
-                    size: 1,
-                },
-                5 => Instruction {
-                    address,
-                    op: Opcode::Cpl,
-                    size: 1,
-                },
-                6 => Instruction {
-                    address,
-                    op: Opcode::Scf,
-                    size: 1,
-                },
-                7 => Instruction {
-                    address,
-                    op: Opcode::Ccf,
-                    size: 1,
-                },
-                _ => unreachable!(),
-            };
-        } else if match_two_r8_mask(byte, 0b01000000) {
-            return Instruction {
+            },
+            0x12 => Instruction {
                 address,
                 op: Opcode::Ld8 {
-                    destination: make_operand_from_r8(byte, false),
-                    source: make_operand_from_r8(byte, true),
+                    destination: Operand::Deref(DerefOperand::Register(Register::De)),
+                    source: Operand::Register(Register::A),
                 },
-                size: 1,
-            };
-        } else if match_subopcode_r8_mask(byte, 0b10000000) {
-            // Opcode (group 3)
-            let operand = make_operand_from_r8(byte, true);
-            return match get_subopcode(byte) {
-                0 => Instruction {
-                    address,
-                    op: Opcode::Add8 { operand },
-                    size: 1,
+            },
+            0x13 => Instruction {
+                address,
+                op: Opcode::Inc16 {
+                    register: Register::De,
                 },
-                1 => Instruction {
-                    address,
-                    op: Opcode::Adc { operand },
-                    size: 1,
+            },
+            0x14 => Instruction {
+                address,
+                op: Opcode::Inc {
+                    operand: Operand::Register(Register::D),
                 },
-                2 => Instruction {
-                    address,
-                    op: Opcode::Sub { operand },
-                    size: 1,
+            },
+            0x15 => Instruction {
+                address,
+                op: Opcode::Dec {
+                    operand: Operand::Register(Register::D),
                 },
-                3 => Instruction {
-                    address,
-                    op: Opcode::Sbc { operand },
-                    size: 1,
+            },
+            0x16 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::D),
+                    source: Operand::U8(memory_bus.read_u8(address.wrapping_add(1))),
                 },
-                4 => Instruction {
-                    address,
-                    op: Opcode::And { operand },
-                    size: 1,
+            },
+            0x17 => Instruction {
+                address,
+                op: Opcode::Rla,
+            },
+            0x18 => Instruction {
+                address,
+                op: Opcode::Jr {
+                    offset: make_i8(memory_bus.read_u8(address.wrapping_add(1))),
                 },
-                5 => Instruction {
-                    address,
-                    op: Opcode::Xor { operand },
-                    size: 1,
+            },
+            0x19 => Instruction {
+                address,
+                op: Opcode::Add16 {
+                    register: Register::Hl,
+                    operand: Operand::Register(Register::De),
                 },
-                6 => Instruction {
-                    address,
-                    op: Opcode::Or { operand },
-                    size: 1,
+            },
+            0x1a => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::A),
+                    source: Operand::Deref(DerefOperand::Register(Register::De)),
                 },
-                7 => Instruction {
-                    address,
-                    op: Opcode::Cp { operand },
-                    size: 1,
+            },
+            0x1b => Instruction {
+                address,
+                op: Opcode::Dec16 {
+                    register: Register::De,
                 },
-                _ => unreachable!(),
-            };
-        } else if match_cond_mask(byte, 0b11000000) {
-            return Instruction {
+            },
+            0x1c => Instruction {
+                address,
+                op: Opcode::Inc {
+                    operand: Operand::Register(Register::E),
+                },
+            },
+            0x1d => Instruction {
+                address,
+                op: Opcode::Dec {
+                    operand: Operand::Register(Register::E),
+                },
+            },
+            0x1e => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::E),
+                    source: Operand::U8(memory_bus.read_u8(address.wrapping_add(1))),
+                },
+            },
+            0x1f => Instruction {
+                address,
+                op: Opcode::Rra,
+            },
+            0x20 => Instruction {
+                address,
+                op: Opcode::JrCond {
+                    condition: ConditionType::NonZero,
+                    offset: make_i8(memory_bus.read_u8(address.wrapping_add(1))),
+                },
+            },
+            0x21 => Instruction {
+                address,
+                op: Opcode::Ld16 {
+                    destination: Operand::Register(Register::Hl),
+                    source: Operand::U16(make_u16(
+                        memory_bus.read_u8(address.wrapping_add(1)),
+                        memory_bus.read_u8(address.wrapping_add(2)),
+                    )),
+                },
+            },
+            0x22 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Deref(DerefOperand::Register(Register::HlPlus)),
+                    source: Operand::Register(Register::A),
+                },
+            },
+            0x23 => Instruction {
+                address,
+                op: Opcode::Inc16 {
+                    register: Register::Hl,
+                },
+            },
+            0x24 => Instruction {
+                address,
+                op: Opcode::Inc {
+                    operand: Operand::Register(Register::H),
+                },
+            },
+            0x25 => Instruction {
+                address,
+                op: Opcode::Dec {
+                    operand: Operand::Register(Register::H),
+                },
+            },
+            0x26 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::H),
+                    source: Operand::U8(memory_bus.read_u8(address.wrapping_add(1))),
+                },
+            },
+            0x27 => Instruction {
+                address,
+                op: Opcode::Daa,
+            },
+            0x28 => Instruction {
+                address,
+                op: Opcode::JrCond {
+                    condition: ConditionType::Zero,
+                    offset: make_i8(memory_bus.read_u8(address.wrapping_add(1))),
+                },
+            },
+            0x29 => Instruction {
+                address,
+                op: Opcode::Add16 {
+                    register: Register::Hl,
+                    operand: Operand::Register(Register::Hl),
+                },
+            },
+            0x2a => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::A),
+                    source: Operand::Deref(DerefOperand::Register(Register::HlPlus)),
+                },
+            },
+            0x2b => Instruction {
+                address,
+                op: Opcode::Dec16 {
+                    register: Register::Hl,
+                },
+            },
+            0x2c => Instruction {
+                address,
+                op: Opcode::Inc {
+                    operand: Operand::Register(Register::L),
+                },
+            },
+            0x2d => Instruction {
+                address,
+                op: Opcode::Dec {
+                    operand: Operand::Register(Register::L),
+                },
+            },
+            0x2e => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::L),
+                    source: Operand::U8(memory_bus.read_u8(address.wrapping_add(1))),
+                },
+            },
+            0x2f => Instruction {
+                address,
+                op: Opcode::Cpl,
+            },
+            0x30 => Instruction {
+                address,
+                op: Opcode::JrCond {
+                    condition: ConditionType::NotCarry,
+                    offset: make_i8(memory_bus.read_u8(address.wrapping_add(1))),
+                },
+            },
+            0x31 => Instruction {
+                address,
+                op: Opcode::Ld16 {
+                    destination: Operand::Register(Register::Sp),
+                    source: Operand::U16(make_u16(
+                        memory_bus.read_u8(address.wrapping_add(1)),
+                        memory_bus.read_u8(address.wrapping_add(2)),
+                    )),
+                },
+            },
+            0x32 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Deref(DerefOperand::Register(Register::HlMinus)),
+                    source: Operand::Register(Register::A),
+                },
+            },
+            0x33 => Instruction {
+                address,
+                op: Opcode::Inc16 {
+                    register: Register::Sp,
+                },
+            },
+            0x34 => Instruction {
+                address,
+                op: Opcode::Inc {
+                    operand: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0x35 => Instruction {
+                address,
+                op: Opcode::Dec {
+                    operand: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0x36 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                    source: Operand::U8(memory_bus.read_u8(address.wrapping_add(1))),
+                },
+            },
+            0x37 => Instruction {
+                address,
+                op: Opcode::Scf,
+            },
+            0x38 => Instruction {
+                address,
+                op: Opcode::JrCond {
+                    condition: ConditionType::Carry,
+                    offset: make_i8(memory_bus.read_u8(address.wrapping_add(1))),
+                },
+            },
+            0x39 => Instruction {
+                address,
+                op: Opcode::Add16 {
+                    register: Register::Hl,
+                    operand: Operand::Register(Register::Sp),
+                },
+            },
+            0x3a => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::A),
+                    source: Operand::Deref(DerefOperand::Register(Register::HlMinus)),
+                },
+            },
+            0x3b => Instruction {
+                address,
+                op: Opcode::Dec16 {
+                    register: Register::Sp,
+                },
+            },
+            0x3c => Instruction {
+                address,
+                op: Opcode::Inc {
+                    operand: Operand::Register(Register::A),
+                },
+            },
+            0x3d => Instruction {
+                address,
+                op: Opcode::Dec {
+                    operand: Operand::Register(Register::A),
+                },
+            },
+            0x3e => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::A),
+                    source: Operand::U8(memory_bus.read_u8(address.wrapping_add(1))),
+                },
+            },
+            0x3f => Instruction {
+                address,
+                op: Opcode::Ccf,
+            },
+            0x40 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::B),
+                    source: Operand::Register(Register::B),
+                },
+            },
+            0x41 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::B),
+                    source: Operand::Register(Register::C),
+                },
+            },
+            0x42 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::B),
+                    source: Operand::Register(Register::D),
+                },
+            },
+            0x43 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::B),
+                    source: Operand::Register(Register::E),
+                },
+            },
+            0x44 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::B),
+                    source: Operand::Register(Register::H),
+                },
+            },
+            0x45 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::B),
+                    source: Operand::Register(Register::L),
+                },
+            },
+            0x46 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::B),
+                    source: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0x47 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::B),
+                    source: Operand::Register(Register::A),
+                },
+            },
+            0x48 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::C),
+                    source: Operand::Register(Register::B),
+                },
+            },
+            0x49 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::C),
+                    source: Operand::Register(Register::C),
+                },
+            },
+            0x4a => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::C),
+                    source: Operand::Register(Register::D),
+                },
+            },
+            0x4b => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::C),
+                    source: Operand::Register(Register::E),
+                },
+            },
+            0x4c => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::C),
+                    source: Operand::Register(Register::H),
+                },
+            },
+            0x4d => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::C),
+                    source: Operand::Register(Register::L),
+                },
+            },
+            0x4e => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::C),
+                    source: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0x4f => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::C),
+                    source: Operand::Register(Register::A),
+                },
+            },
+            0x50 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::D),
+                    source: Operand::Register(Register::B),
+                },
+            },
+            0x51 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::D),
+                    source: Operand::Register(Register::C),
+                },
+            },
+            0x52 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::D),
+                    source: Operand::Register(Register::D),
+                },
+            },
+            0x53 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::D),
+                    source: Operand::Register(Register::E),
+                },
+            },
+            0x54 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::D),
+                    source: Operand::Register(Register::H),
+                },
+            },
+            0x55 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::D),
+                    source: Operand::Register(Register::L),
+                },
+            },
+            0x56 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::D),
+                    source: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0x57 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::D),
+                    source: Operand::Register(Register::A),
+                },
+            },
+            0x58 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::E),
+                    source: Operand::Register(Register::B),
+                },
+            },
+            0x59 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::E),
+                    source: Operand::Register(Register::C),
+                },
+            },
+            0x5a => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::E),
+                    source: Operand::Register(Register::D),
+                },
+            },
+            0x5b => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::E),
+                    source: Operand::Register(Register::E),
+                },
+            },
+            0x5c => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::E),
+                    source: Operand::Register(Register::H),
+                },
+            },
+            0x5d => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::E),
+                    source: Operand::Register(Register::L),
+                },
+            },
+            0x5e => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::E),
+                    source: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0x5f => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::E),
+                    source: Operand::Register(Register::A),
+                },
+            },
+            0x60 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::H),
+                    source: Operand::Register(Register::B),
+                },
+            },
+            0x61 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::H),
+                    source: Operand::Register(Register::C),
+                },
+            },
+            0x62 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::H),
+                    source: Operand::Register(Register::D),
+                },
+            },
+            0x63 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::H),
+                    source: Operand::Register(Register::E),
+                },
+            },
+            0x64 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::H),
+                    source: Operand::Register(Register::H),
+                },
+            },
+            0x65 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::H),
+                    source: Operand::Register(Register::L),
+                },
+            },
+            0x66 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::H),
+                    source: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0x67 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::H),
+                    source: Operand::Register(Register::A),
+                },
+            },
+            0x68 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::L),
+                    source: Operand::Register(Register::B),
+                },
+            },
+            0x69 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::L),
+                    source: Operand::Register(Register::C),
+                },
+            },
+            0x6a => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::L),
+                    source: Operand::Register(Register::D),
+                },
+            },
+            0x6b => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::L),
+                    source: Operand::Register(Register::E),
+                },
+            },
+            0x6c => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::L),
+                    source: Operand::Register(Register::H),
+                },
+            },
+            0x6d => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::L),
+                    source: Operand::Register(Register::L),
+                },
+            },
+            0x6e => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::L),
+                    source: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0x6f => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::L),
+                    source: Operand::Register(Register::A),
+                },
+            },
+            0x70 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                    source: Operand::Register(Register::B),
+                },
+            },
+            0x71 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                    source: Operand::Register(Register::C),
+                },
+            },
+            0x72 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                    source: Operand::Register(Register::D),
+                },
+            },
+            0x73 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                    source: Operand::Register(Register::E),
+                },
+            },
+            0x74 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                    source: Operand::Register(Register::H),
+                },
+            },
+            0x75 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                    source: Operand::Register(Register::L),
+                },
+            },
+            0x76 => Instruction {
+                address,
+                op: Opcode::Halt,
+            },
+            0x77 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                    source: Operand::Register(Register::A),
+                },
+            },
+            0x78 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::A),
+                    source: Operand::Register(Register::B),
+                },
+            },
+            0x79 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::A),
+                    source: Operand::Register(Register::C),
+                },
+            },
+            0x7a => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::A),
+                    source: Operand::Register(Register::D),
+                },
+            },
+            0x7b => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::A),
+                    source: Operand::Register(Register::E),
+                },
+            },
+            0x7c => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::A),
+                    source: Operand::Register(Register::H),
+                },
+            },
+            0x7d => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::A),
+                    source: Operand::Register(Register::L),
+                },
+            },
+            0x7e => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::A),
+                    source: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0x7f => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::A),
+                    source: Operand::Register(Register::A),
+                },
+            },
+            0x80 => Instruction {
+                address,
+                op: Opcode::Add8 {
+                    operand: Operand::Register(Register::B),
+                },
+            },
+            0x81 => Instruction {
+                address,
+                op: Opcode::Add8 {
+                    operand: Operand::Register(Register::C),
+                },
+            },
+            0x82 => Instruction {
+                address,
+                op: Opcode::Add8 {
+                    operand: Operand::Register(Register::D),
+                },
+            },
+            0x83 => Instruction {
+                address,
+                op: Opcode::Add8 {
+                    operand: Operand::Register(Register::E),
+                },
+            },
+            0x84 => Instruction {
+                address,
+                op: Opcode::Add8 {
+                    operand: Operand::Register(Register::H),
+                },
+            },
+            0x85 => Instruction {
+                address,
+                op: Opcode::Add8 {
+                    operand: Operand::Register(Register::L),
+                },
+            },
+            0x86 => Instruction {
+                address,
+                op: Opcode::Add8 {
+                    operand: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0x87 => Instruction {
+                address,
+                op: Opcode::Add8 {
+                    operand: Operand::Register(Register::A),
+                },
+            },
+            0x88 => Instruction {
+                address,
+                op: Opcode::Adc {
+                    operand: Operand::Register(Register::B),
+                },
+            },
+            0x89 => Instruction {
+                address,
+                op: Opcode::Adc {
+                    operand: Operand::Register(Register::C),
+                },
+            },
+            0x8a => Instruction {
+                address,
+                op: Opcode::Adc {
+                    operand: Operand::Register(Register::D),
+                },
+            },
+            0x8b => Instruction {
+                address,
+                op: Opcode::Adc {
+                    operand: Operand::Register(Register::E),
+                },
+            },
+            0x8c => Instruction {
+                address,
+                op: Opcode::Adc {
+                    operand: Operand::Register(Register::H),
+                },
+            },
+            0x8d => Instruction {
+                address,
+                op: Opcode::Adc {
+                    operand: Operand::Register(Register::L),
+                },
+            },
+            0x8e => Instruction {
+                address,
+                op: Opcode::Adc {
+                    operand: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0x8f => Instruction {
+                address,
+                op: Opcode::Adc {
+                    operand: Operand::Register(Register::A),
+                },
+            },
+            0x90 => Instruction {
+                address,
+                op: Opcode::Sub {
+                    operand: Operand::Register(Register::B),
+                },
+            },
+            0x91 => Instruction {
+                address,
+                op: Opcode::Sub {
+                    operand: Operand::Register(Register::C),
+                },
+            },
+            0x92 => Instruction {
+                address,
+                op: Opcode::Sub {
+                    operand: Operand::Register(Register::D),
+                },
+            },
+            0x93 => Instruction {
+                address,
+                op: Opcode::Sub {
+                    operand: Operand::Register(Register::E),
+                },
+            },
+            0x94 => Instruction {
+                address,
+                op: Opcode::Sub {
+                    operand: Operand::Register(Register::H),
+                },
+            },
+            0x95 => Instruction {
+                address,
+                op: Opcode::Sub {
+                    operand: Operand::Register(Register::L),
+                },
+            },
+            0x96 => Instruction {
+                address,
+                op: Opcode::Sub {
+                    operand: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0x97 => Instruction {
+                address,
+                op: Opcode::Sub {
+                    operand: Operand::Register(Register::A),
+                },
+            },
+            0x98 => Instruction {
+                address,
+                op: Opcode::Sbc {
+                    operand: Operand::Register(Register::B),
+                },
+            },
+            0x99 => Instruction {
+                address,
+                op: Opcode::Sbc {
+                    operand: Operand::Register(Register::C),
+                },
+            },
+            0x9a => Instruction {
+                address,
+                op: Opcode::Sbc {
+                    operand: Operand::Register(Register::D),
+                },
+            },
+            0x9b => Instruction {
+                address,
+                op: Opcode::Sbc {
+                    operand: Operand::Register(Register::E),
+                },
+            },
+            0x9c => Instruction {
+                address,
+                op: Opcode::Sbc {
+                    operand: Operand::Register(Register::H),
+                },
+            },
+            0x9d => Instruction {
+                address,
+                op: Opcode::Sbc {
+                    operand: Operand::Register(Register::L),
+                },
+            },
+            0x9e => Instruction {
+                address,
+                op: Opcode::Sbc {
+                    operand: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0x9f => Instruction {
+                address,
+                op: Opcode::Sbc {
+                    operand: Operand::Register(Register::A),
+                },
+            },
+            0xa0 => Instruction {
+                address,
+                op: Opcode::And {
+                    operand: Operand::Register(Register::B),
+                },
+            },
+            0xa1 => Instruction {
+                address,
+                op: Opcode::And {
+                    operand: Operand::Register(Register::C),
+                },
+            },
+            0xa2 => Instruction {
+                address,
+                op: Opcode::And {
+                    operand: Operand::Register(Register::D),
+                },
+            },
+            0xa3 => Instruction {
+                address,
+                op: Opcode::And {
+                    operand: Operand::Register(Register::E),
+                },
+            },
+            0xa4 => Instruction {
+                address,
+                op: Opcode::And {
+                    operand: Operand::Register(Register::H),
+                },
+            },
+            0xa5 => Instruction {
+                address,
+                op: Opcode::And {
+                    operand: Operand::Register(Register::L),
+                },
+            },
+            0xa6 => Instruction {
+                address,
+                op: Opcode::And {
+                    operand: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0xa7 => Instruction {
+                address,
+                op: Opcode::And {
+                    operand: Operand::Register(Register::A),
+                },
+            },
+            0xa8 => Instruction {
+                address,
+                op: Opcode::Xor {
+                    operand: Operand::Register(Register::B),
+                },
+            },
+            0xa9 => Instruction {
+                address,
+                op: Opcode::Xor {
+                    operand: Operand::Register(Register::C),
+                },
+            },
+            0xaa => Instruction {
+                address,
+                op: Opcode::Xor {
+                    operand: Operand::Register(Register::D),
+                },
+            },
+            0xab => Instruction {
+                address,
+                op: Opcode::Xor {
+                    operand: Operand::Register(Register::E),
+                },
+            },
+            0xac => Instruction {
+                address,
+                op: Opcode::Xor {
+                    operand: Operand::Register(Register::H),
+                },
+            },
+            0xad => Instruction {
+                address,
+                op: Opcode::Xor {
+                    operand: Operand::Register(Register::L),
+                },
+            },
+            0xae => Instruction {
+                address,
+                op: Opcode::Xor {
+                    operand: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0xaf => Instruction {
+                address,
+                op: Opcode::Xor {
+                    operand: Operand::Register(Register::A),
+                },
+            },
+            0xb0 => Instruction {
+                address,
+                op: Opcode::Or {
+                    operand: Operand::Register(Register::B),
+                },
+            },
+            0xb1 => Instruction {
+                address,
+                op: Opcode::Or {
+                    operand: Operand::Register(Register::C),
+                },
+            },
+            0xb2 => Instruction {
+                address,
+                op: Opcode::Or {
+                    operand: Operand::Register(Register::D),
+                },
+            },
+            0xb3 => Instruction {
+                address,
+                op: Opcode::Or {
+                    operand: Operand::Register(Register::E),
+                },
+            },
+            0xb4 => Instruction {
+                address,
+                op: Opcode::Or {
+                    operand: Operand::Register(Register::H),
+                },
+            },
+            0xb5 => Instruction {
+                address,
+                op: Opcode::Or {
+                    operand: Operand::Register(Register::L),
+                },
+            },
+            0xb6 => Instruction {
+                address,
+                op: Opcode::Or {
+                    operand: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0xb7 => Instruction {
+                address,
+                op: Opcode::Or {
+                    operand: Operand::Register(Register::A),
+                },
+            },
+            0xb8 => Instruction {
+                address,
+                op: Opcode::Cp {
+                    operand: Operand::Register(Register::B),
+                },
+            },
+            0xb9 => Instruction {
+                address,
+                op: Opcode::Cp {
+                    operand: Operand::Register(Register::C),
+                },
+            },
+            0xba => Instruction {
+                address,
+                op: Opcode::Cp {
+                    operand: Operand::Register(Register::D),
+                },
+            },
+            0xbb => Instruction {
+                address,
+                op: Opcode::Cp {
+                    operand: Operand::Register(Register::E),
+                },
+            },
+            0xbc => Instruction {
+                address,
+                op: Opcode::Cp {
+                    operand: Operand::Register(Register::H),
+                },
+            },
+            0xbd => Instruction {
+                address,
+                op: Opcode::Cp {
+                    operand: Operand::Register(Register::L),
+                },
+            },
+            0xbe => Instruction {
+                address,
+                op: Opcode::Cp {
+                    operand: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0xbf => Instruction {
+                address,
+                op: Opcode::Cp {
+                    operand: Operand::Register(Register::A),
+                },
+            },
+            0xc0 => Instruction {
                 address,
                 op: Opcode::RetCond {
-                    condition: make_cond(byte),
+                    condition: ConditionType::NonZero,
                 },
-                size: 1,
-            };
-        } else if match_cond_mask(byte, 0b11000010) {
-            return Instruction {
-                address,
-                op: Opcode::JpCond {
-                    condition: make_cond(byte),
-                    destination: make_u16(raw_bytes[1], raw_bytes[2]),
-                },
-                size: 3,
-            };
-        } else if match_cond_mask(byte, 0b11000100) {
-            return Instruction {
-                address,
-                op: Opcode::CallCond {
-                    condition: make_cond(byte),
-                    destination: make_u16(raw_bytes[1], raw_bytes[2]),
-                },
-                size: 3,
-            };
-        } else if match_r16_mask(byte, 0b11000001) {
-            return Instruction {
+            },
+            0xc1 => Instruction {
                 address,
                 op: Opcode::Pop {
-                    register: make_r16(byte, 3),
+                    register: Register::Bc,
                 },
-                size: 1,
-            };
-        } else if (byte & 0b11001111) == 0b11001001 {
-            let opcode = (byte >> 4) & 0b11;
-            return match opcode {
-                0 => Instruction {
-                    address,
-                    op: Opcode::Ret,
-                    size: 1,
+            },
+            0xc2 => Instruction {
+                address,
+                op: Opcode::JpCond {
+                    condition: ConditionType::NonZero,
+                    destination: make_u16(
+                        memory_bus.read_u8(address.wrapping_add(1)),
+                        memory_bus.read_u8(address.wrapping_add(2)),
+                    ),
                 },
-                1 => Instruction {
-                    address,
-                    op: Opcode::Reti,
-                    size: 1,
+            },
+            0xc3 => Instruction {
+                address,
+                op: Opcode::Jp {
+                    destination: Operand::U16(make_u16(
+                        memory_bus.read_u8(address.wrapping_add(1)),
+                        memory_bus.read_u8(address.wrapping_add(2)),
+                    )),
                 },
-                2 => Instruction {
-                    address,
-                    op: Opcode::Jp {
-                        destination: Operand::Register(Register::Hl),
-                    },
-                    size: 1,
+            },
+            0xc4 => Instruction {
+                address,
+                op: Opcode::CallCond {
+                    condition: ConditionType::NonZero,
+                    destination: make_u16(
+                        memory_bus.read_u8(address.wrapping_add(1)),
+                        memory_bus.read_u8(address.wrapping_add(2)),
+                    ),
                 },
-                3 => Instruction {
-                    address,
-                    op: Opcode::Ld16 {
-                        destination: Operand::Register(Register::Sp),
-                        source: Operand::Register(Register::Hl),
-                    },
-                    size: 1,
-                },
-                _ => unreachable!(),
-            };
-        } else if match_subopcode_mask(byte, 0b11000011) {
-            // opcode (group 4)
-            return match get_subopcode(byte) {
-                0 => Instruction {
-                    address,
-                    op: Opcode::Jp {
-                        destination: Operand::U16(make_u16(raw_bytes[1], raw_bytes[2])),
-                    },
-                    size: 3,
-                },
-                1 => unreachable!(), // technically this should be the CB prefix but we checked for that earlier
-                6 => Instruction {
-                    address,
-                    op: Opcode::Di,
-                    size: 1,
-                },
-                7 => Instruction {
-                    address,
-                    op: Opcode::Ei,
-                    size: 1,
-                },
-                _ => Instruction {
-                    address,
-                    op: Opcode::Unknown { opcode: byte },
-                    size: 1,
-                },
-            };
-        } else if match_r16_mask(byte, 0b11000101) {
-            return Instruction {
+            },
+            0xc5 => Instruction {
                 address,
                 op: Opcode::Push {
-                    register: make_r16(byte, 3),
+                    register: Register::Bc,
                 },
-                size: 1,
-            };
-        } else if match_subopcode_mask(byte, 0b11000110) {
-            let operand = Operand::U8(raw_bytes[1]);
-            return match get_subopcode(byte) {
-                0 => Instruction {
-                    address,
-                    op: Opcode::Add8 { operand },
-                    size: 2,
-                },
-                1 => Instruction {
-                    address,
-                    op: Opcode::Adc { operand },
-                    size: 2,
-                },
-                2 => Instruction {
-                    address,
-                    op: Opcode::Sub { operand },
-                    size: 2,
-                },
-                3 => Instruction {
-                    address,
-                    op: Opcode::Sbc { operand },
-                    size: 2,
-                },
-                4 => Instruction {
-                    address,
-                    op: Opcode::And { operand },
-                    size: 2,
-                },
-                5 => Instruction {
-                    address,
-                    op: Opcode::Xor { operand },
-                    size: 2,
-                },
-                6 => Instruction {
-                    address,
-                    op: Opcode::Or { operand },
-                    size: 2,
-                },
-                7 => Instruction {
-                    address,
-                    op: Opcode::Cp { operand },
-                    size: 2,
-                },
-                _ => unreachable!(),
-            };
-        } else if match_exp_mask(byte, 0b11000111) {
-            return Instruction {
+            },
+            0xc6 => Instruction {
                 address,
-                op: Opcode::Rst {
-                    vector: get_exp(byte),
+                op: Opcode::Add8 {
+                    operand: Operand::U8(memory_bus.read_u8(address.wrapping_add(1))),
                 },
-                size: 1,
-            };
+            },
+            0xc7 => Instruction {
+                address,
+                op: Opcode::Rst { vector: 0x00 },
+            },
+            0xc8 => Instruction {
+                address,
+                op: Opcode::RetCond {
+                    condition: ConditionType::Zero,
+                },
+            },
+            0xc9 => Instruction {
+                address,
+                op: Opcode::Ret,
+            },
+            0xca => Instruction {
+                address,
+                op: Opcode::JpCond {
+                    condition: ConditionType::Zero,
+                    destination: make_u16(
+                        memory_bus.read_u8(address.wrapping_add(1)),
+                        memory_bus.read_u8(address.wrapping_add(2)),
+                    ),
+                },
+            },
+            0xcb => Self::make_cb_instruction(address, memory_bus),
+            0xcc => Instruction {
+                address,
+                op: Opcode::CallCond {
+                    condition: ConditionType::Zero,
+                    destination: make_u16(
+                        memory_bus.read_u8(address.wrapping_add(1)),
+                        memory_bus.read_u8(address.wrapping_add(2)),
+                    ),
+                },
+            },
+            0xcd => Instruction {
+                address,
+                op: Opcode::Call {
+                    destination: make_u16(
+                        memory_bus.read_u8(address.wrapping_add(1)),
+                        memory_bus.read_u8(address.wrapping_add(2)),
+                    ),
+                },
+            },
+            0xce => Instruction {
+                address,
+                op: Opcode::Adc {
+                    operand: Operand::U8(memory_bus.read_u8(address.wrapping_add(1))),
+                },
+            },
+            0xcf => Instruction {
+                address,
+                op: Opcode::Rst { vector: 0x08 },
+            },
+            0xd0 => Instruction {
+                address,
+                op: Opcode::RetCond {
+                    condition: ConditionType::NotCarry,
+                },
+            },
+            0xd1 => Instruction {
+                address,
+                op: Opcode::Pop {
+                    register: Register::De,
+                },
+            },
+            0xd2 => Instruction {
+                address,
+                op: Opcode::JpCond {
+                    condition: ConditionType::NotCarry,
+                    destination: make_u16(
+                        memory_bus.read_u8(address.wrapping_add(1)),
+                        memory_bus.read_u8(address.wrapping_add(2)),
+                    ),
+                },
+            },
+            0xd3 => Instruction {
+                address,
+                op: Opcode::Unknown { opcode: 0xd3 },
+            },
+            0xd4 => Instruction {
+                address,
+                op: Opcode::CallCond {
+                    condition: ConditionType::NotCarry,
+                    destination: make_u16(
+                        memory_bus.read_u8(address.wrapping_add(1)),
+                        memory_bus.read_u8(address.wrapping_add(2)),
+                    ),
+                },
+            },
+            0xd5 => Instruction {
+                address,
+                op: Opcode::Push {
+                    register: Register::De,
+                },
+            },
+            0xd6 => Instruction {
+                address,
+                op: Opcode::Sub {
+                    operand: Operand::U8(memory_bus.read_u8(address.wrapping_add(1))),
+                },
+            },
+            0xd7 => Instruction {
+                address,
+                op: Opcode::Rst { vector: 0x10 },
+            },
+            0xd8 => Instruction {
+                address,
+                op: Opcode::RetCond {
+                    condition: ConditionType::Carry,
+                },
+            },
+            0xd9 => Instruction {
+                address,
+                op: Opcode::Reti,
+            },
+            0xda => Instruction {
+                address,
+                op: Opcode::JpCond {
+                    condition: ConditionType::Carry,
+                    destination: make_u16(
+                        memory_bus.read_u8(address.wrapping_add(1)),
+                        memory_bus.read_u8(address.wrapping_add(2)),
+                    ),
+                },
+            },
+            0xdb => Instruction {
+                address,
+                op: Opcode::Unknown { opcode: 0xdb },
+            },
+            0xdc => Instruction {
+                address,
+                op: Opcode::CallCond {
+                    condition: ConditionType::Carry,
+                    destination: make_u16(
+                        memory_bus.read_u8(address.wrapping_add(1)),
+                        memory_bus.read_u8(address.wrapping_add(2)),
+                    ),
+                },
+            },
+            0xdd => Instruction {
+                address,
+                op: Opcode::Unknown { opcode: 0xdd },
+            },
+            0xde => Instruction {
+                address,
+                op: Opcode::Sbc {
+                    operand: Operand::U8(memory_bus.read_u8(address.wrapping_add(1))),
+                },
+            },
+            0xdf => Instruction {
+                address,
+                op: Opcode::Rst { vector: 0x18 },
+            },
+            0xe0 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Deref(DerefOperand::Ff00Offset(
+                        memory_bus.read_u8(address.wrapping_add(1)),
+                    )),
+                    source: Operand::Register(Register::A),
+                },
+            },
+            0xe1 => Instruction {
+                address,
+                op: Opcode::Pop {
+                    register: Register::Hl,
+                },
+            },
+            0xe2 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Deref(DerefOperand::Ff00PlusC),
+                    source: Operand::Register(Register::A),
+                },
+            },
+            0xe3 => Instruction {
+                address,
+                op: Opcode::Unknown { opcode: 0xe3 },
+            },
+            0xe4 => Instruction {
+                address,
+                op: Opcode::Unknown { opcode: 0xe4 },
+            },
+            0xe5 => Instruction {
+                address,
+                op: Opcode::Push {
+                    register: Register::Hl,
+                },
+            },
+            0xe6 => Instruction {
+                address,
+                op: Opcode::And {
+                    operand: Operand::U8(memory_bus.read_u8(address.wrapping_add(1))),
+                },
+            },
+            0xe7 => Instruction {
+                address,
+                op: Opcode::Rst { vector: 0x20 },
+            },
+            0xe8 => Instruction {
+                address,
+                op: Opcode::Add16 {
+                    register: Register::Sp,
+                    operand: Operand::I8(make_i8(memory_bus.read_u8(address.wrapping_add(1)))),
+                },
+            },
+            0xe9 => Instruction {
+                address,
+                op: Opcode::Jp {
+                    destination: Operand::Register(Register::Hl),
+                },
+            },
+            0xea => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Deref(DerefOperand::Address(make_u16(
+                        memory_bus.read_u8(address.wrapping_add(1)),
+                        memory_bus.read_u8(address.wrapping_add(2)),
+                    ))),
+                    source: Operand::Register(Register::A),
+                },
+            },
+            0xeb => Instruction {
+                address,
+                op: Opcode::Unknown { opcode: 0xeb },
+            },
+            0xec => Instruction {
+                address,
+                op: Opcode::Unknown { opcode: 0xec },
+            },
+            0xed => Instruction {
+                address,
+                op: Opcode::Unknown { opcode: 0xed },
+            },
+            0xee => Instruction {
+                address,
+                op: Opcode::Xor {
+                    operand: Operand::U8(memory_bus.read_u8(address.wrapping_add(1))),
+                },
+            },
+            0xef => Instruction {
+                address,
+                op: Opcode::Rst { vector: 0x28 },
+            },
+            0xf0 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::A),
+                    source: Operand::Deref(DerefOperand::Ff00Offset(
+                        memory_bus.read_u8(address.wrapping_add(1)),
+                    )),
+                },
+            },
+            0xf1 => Instruction {
+                address,
+                op: Opcode::Pop {
+                    register: Register::Af,
+                },
+            },
+            0xf2 => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::A),
+                    source: Operand::Deref(DerefOperand::Ff00PlusC),
+                },
+            },
+            0xf3 => Instruction {
+                address,
+                op: Opcode::Di,
+            },
+            0xf4 => Instruction {
+                address,
+                op: Opcode::Unknown { opcode: 0xe4 },
+            },
+            0xf5 => Instruction {
+                address,
+                op: Opcode::Push {
+                    register: Register::Af,
+                },
+            },
+            0xf6 => Instruction {
+                address,
+                op: Opcode::Or {
+                    operand: Operand::U8(memory_bus.read_u8(address.wrapping_add(1))),
+                },
+            },
+            0xf7 => Instruction {
+                address,
+                op: Opcode::Rst { vector: 0x30 },
+            },
+            0xf8 => Instruction {
+                address,
+                op: Opcode::Ld16 {
+                    destination: Operand::Register(Register::Hl),
+                    source: Operand::StackOffset(make_i8(
+                        memory_bus.read_u8(address.wrapping_add(1)),
+                    )),
+                },
+            },
+            0xf9 => Instruction {
+                address,
+                op: Opcode::Ld16 {
+                    destination: Operand::Register(Register::Sp),
+                    source: Operand::Register(Register::Hl),
+                },
+            },
+            0xfa => Instruction {
+                address,
+                op: Opcode::Ld8 {
+                    destination: Operand::Register(Register::A),
+                    source: Operand::Deref(DerefOperand::Address(make_u16(
+                        memory_bus.read_u8(address.wrapping_add(1)),
+                        memory_bus.read_u8(address.wrapping_add(2)),
+                    ))),
+                },
+            },
+            0xfb => Instruction {
+                address,
+                op: Opcode::Ei,
+            },
+            0xfc => Instruction {
+                address,
+                op: Opcode::Unknown { opcode: 0xfc },
+            },
+            0xfd => Instruction {
+                address,
+                op: Opcode::Unknown { opcode: 0xfd },
+            },
+            0xfe => Instruction {
+                address,
+                op: Opcode::Cp {
+                    operand: Operand::U8(memory_bus.read_u8(address.wrapping_add(1))),
+                },
+            },
+            0xff => Instruction {
+                address,
+                op: Opcode::Rst { vector: 0x38 },
+            },
         }
+    }
 
-        //eprintln!("Unknown op code {:02x}", byte);
-        Instruction {
-            address,
-            op: Opcode::Unknown { opcode: byte },
-            size: 1,
+    fn make_cb_instruction(address: u16, memory_bus: &MemoryBus) -> Instruction {
+        let op = memory_bus.read_u8(address.wrapping_add(1));
+        match op {
+            0x00 => Instruction {
+                address,
+                op: Opcode::Rlc {
+                    operand: Operand::Register(Register::B),
+                },
+            },
+            0x01 => Instruction {
+                address,
+                op: Opcode::Rlc {
+                    operand: Operand::Register(Register::C),
+                },
+            },
+            0x02 => Instruction {
+                address,
+                op: Opcode::Rlc {
+                    operand: Operand::Register(Register::D),
+                },
+            },
+            0x03 => Instruction {
+                address,
+                op: Opcode::Rlc {
+                    operand: Operand::Register(Register::E),
+                },
+            },
+            0x04 => Instruction {
+                address,
+                op: Opcode::Rlc {
+                    operand: Operand::Register(Register::H),
+                },
+            },
+            0x05 => Instruction {
+                address,
+                op: Opcode::Rlc {
+                    operand: Operand::Register(Register::L),
+                },
+            },
+            0x06 => Instruction {
+                address,
+                op: Opcode::Rlc {
+                    operand: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0x07 => Instruction {
+                address,
+                op: Opcode::Rlc {
+                    operand: Operand::Register(Register::A),
+                },
+            },
+            0x08 => Instruction {
+                address,
+                op: Opcode::Rrc {
+                    operand: Operand::Register(Register::B),
+                },
+            },
+            0x09 => Instruction {
+                address,
+                op: Opcode::Rrc {
+                    operand: Operand::Register(Register::C),
+                },
+            },
+            0x0a => Instruction {
+                address,
+                op: Opcode::Rrc {
+                    operand: Operand::Register(Register::D),
+                },
+            },
+            0x0b => Instruction {
+                address,
+                op: Opcode::Rrc {
+                    operand: Operand::Register(Register::E),
+                },
+            },
+            0x0c => Instruction {
+                address,
+                op: Opcode::Rrc {
+                    operand: Operand::Register(Register::H),
+                },
+            },
+            0x0d => Instruction {
+                address,
+                op: Opcode::Rrc {
+                    operand: Operand::Register(Register::L),
+                },
+            },
+            0x0e => Instruction {
+                address,
+                op: Opcode::Rrc {
+                    operand: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0x0f => Instruction {
+                address,
+                op: Opcode::Rrc {
+                    operand: Operand::Register(Register::A),
+                },
+            },
+            0x10 => Instruction {
+                address,
+                op: Opcode::Rl {
+                    operand: Operand::Register(Register::B),
+                },
+            },
+            0x11 => Instruction {
+                address,
+                op: Opcode::Rl {
+                    operand: Operand::Register(Register::C),
+                },
+            },
+            0x12 => Instruction {
+                address,
+                op: Opcode::Rl {
+                    operand: Operand::Register(Register::D),
+                },
+            },
+            0x13 => Instruction {
+                address,
+                op: Opcode::Rl {
+                    operand: Operand::Register(Register::E),
+                },
+            },
+            0x14 => Instruction {
+                address,
+                op: Opcode::Rl {
+                    operand: Operand::Register(Register::H),
+                },
+            },
+            0x15 => Instruction {
+                address,
+                op: Opcode::Rl {
+                    operand: Operand::Register(Register::L),
+                },
+            },
+            0x16 => Instruction {
+                address,
+                op: Opcode::Rl {
+                    operand: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0x17 => Instruction {
+                address,
+                op: Opcode::Rl {
+                    operand: Operand::Register(Register::A),
+                },
+            },
+            0x18 => Instruction {
+                address,
+                op: Opcode::Rr {
+                    operand: Operand::Register(Register::B),
+                },
+            },
+            0x19 => Instruction {
+                address,
+                op: Opcode::Rr {
+                    operand: Operand::Register(Register::C),
+                },
+            },
+            0x1a => Instruction {
+                address,
+                op: Opcode::Rr {
+                    operand: Operand::Register(Register::D),
+                },
+            },
+            0x1b => Instruction {
+                address,
+                op: Opcode::Rr {
+                    operand: Operand::Register(Register::E),
+                },
+            },
+            0x1c => Instruction {
+                address,
+                op: Opcode::Rr {
+                    operand: Operand::Register(Register::H),
+                },
+            },
+            0x1d => Instruction {
+                address,
+                op: Opcode::Rr {
+                    operand: Operand::Register(Register::L),
+                },
+            },
+            0x1e => Instruction {
+                address,
+                op: Opcode::Rr {
+                    operand: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0x1f => Instruction {
+                address,
+                op: Opcode::Rr {
+                    operand: Operand::Register(Register::A),
+                },
+            },
+            0x20 => Instruction {
+                address,
+                op: Opcode::Sla {
+                    operand: Operand::Register(Register::B),
+                },
+            },
+            0x21 => Instruction {
+                address,
+                op: Opcode::Sla {
+                    operand: Operand::Register(Register::C),
+                },
+            },
+            0x22 => Instruction {
+                address,
+                op: Opcode::Sla {
+                    operand: Operand::Register(Register::D),
+                },
+            },
+            0x23 => Instruction {
+                address,
+                op: Opcode::Sla {
+                    operand: Operand::Register(Register::E),
+                },
+            },
+            0x24 => Instruction {
+                address,
+                op: Opcode::Sla {
+                    operand: Operand::Register(Register::H),
+                },
+            },
+            0x25 => Instruction {
+                address,
+                op: Opcode::Sla {
+                    operand: Operand::Register(Register::L),
+                },
+            },
+            0x26 => Instruction {
+                address,
+                op: Opcode::Sla {
+                    operand: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0x27 => Instruction {
+                address,
+                op: Opcode::Sla {
+                    operand: Operand::Register(Register::A),
+                },
+            },
+            0x28 => Instruction {
+                address,
+                op: Opcode::Sra {
+                    operand: Operand::Register(Register::B),
+                },
+            },
+            0x29 => Instruction {
+                address,
+                op: Opcode::Sra {
+                    operand: Operand::Register(Register::C),
+                },
+            },
+            0x2a => Instruction {
+                address,
+                op: Opcode::Sra {
+                    operand: Operand::Register(Register::D),
+                },
+            },
+            0x2b => Instruction {
+                address,
+                op: Opcode::Sra {
+                    operand: Operand::Register(Register::E),
+                },
+            },
+            0x2c => Instruction {
+                address,
+                op: Opcode::Sra {
+                    operand: Operand::Register(Register::H),
+                },
+            },
+            0x2d => Instruction {
+                address,
+                op: Opcode::Sra {
+                    operand: Operand::Register(Register::L),
+                },
+            },
+            0x2e => Instruction {
+                address,
+                op: Opcode::Sra {
+                    operand: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0x2f => Instruction {
+                address,
+                op: Opcode::Sra {
+                    operand: Operand::Register(Register::A),
+                },
+            },
+            0x30 => Instruction {
+                address,
+                op: Opcode::Swap {
+                    operand: Operand::Register(Register::B),
+                },
+            },
+            0x31 => Instruction {
+                address,
+                op: Opcode::Swap {
+                    operand: Operand::Register(Register::C),
+                },
+            },
+            0x32 => Instruction {
+                address,
+                op: Opcode::Swap {
+                    operand: Operand::Register(Register::D),
+                },
+            },
+            0x33 => Instruction {
+                address,
+                op: Opcode::Swap {
+                    operand: Operand::Register(Register::E),
+                },
+            },
+            0x34 => Instruction {
+                address,
+                op: Opcode::Swap {
+                    operand: Operand::Register(Register::H),
+                },
+            },
+            0x35 => Instruction {
+                address,
+                op: Opcode::Swap {
+                    operand: Operand::Register(Register::L),
+                },
+            },
+            0x36 => Instruction {
+                address,
+                op: Opcode::Swap {
+                    operand: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0x37 => Instruction {
+                address,
+                op: Opcode::Swap {
+                    operand: Operand::Register(Register::A),
+                },
+            },
+            0x38 => Instruction {
+                address,
+                op: Opcode::Srl {
+                    operand: Operand::Register(Register::B),
+                },
+            },
+            0x39 => Instruction {
+                address,
+                op: Opcode::Srl {
+                    operand: Operand::Register(Register::C),
+                },
+            },
+            0x3a => Instruction {
+                address,
+                op: Opcode::Srl {
+                    operand: Operand::Register(Register::D),
+                },
+            },
+            0x3b => Instruction {
+                address,
+                op: Opcode::Srl {
+                    operand: Operand::Register(Register::E),
+                },
+            },
+            0x3c => Instruction {
+                address,
+                op: Opcode::Srl {
+                    operand: Operand::Register(Register::H),
+                },
+            },
+            0x3d => Instruction {
+                address,
+                op: Opcode::Srl {
+                    operand: Operand::Register(Register::L),
+                },
+            },
+            0x3e => Instruction {
+                address,
+                op: Opcode::Srl {
+                    operand: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0x3f => Instruction {
+                address,
+                op: Opcode::Srl {
+                    operand: Operand::Register(Register::A),
+                },
+            },
+            0x40 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 0,
+                    destination: Operand::Register(Register::B),
+                },
+            },
+            0x41 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 0,
+                    destination: Operand::Register(Register::C),
+                },
+            },
+            0x42 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 0,
+                    destination: Operand::Register(Register::D),
+                },
+            },
+            0x43 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 0,
+                    destination: Operand::Register(Register::E),
+                },
+            },
+            0x44 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 0,
+                    destination: Operand::Register(Register::H),
+                },
+            },
+            0x45 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 0,
+                    destination: Operand::Register(Register::L),
+                },
+            },
+            0x46 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 0,
+                    destination: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0x47 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 0,
+                    destination: Operand::Register(Register::A),
+                },
+            },
+            0x48 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 1,
+                    destination: Operand::Register(Register::B),
+                },
+            },
+            0x49 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 1,
+                    destination: Operand::Register(Register::C),
+                },
+            },
+            0x4a => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 1,
+                    destination: Operand::Register(Register::D),
+                },
+            },
+            0x4b => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 1,
+                    destination: Operand::Register(Register::E),
+                },
+            },
+            0x4c => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 1,
+                    destination: Operand::Register(Register::H),
+                },
+            },
+            0x4d => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 1,
+                    destination: Operand::Register(Register::L),
+                },
+            },
+            0x4e => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 1,
+                    destination: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0x4f => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 1,
+                    destination: Operand::Register(Register::A),
+                },
+            },
+            0x50 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 2,
+                    destination: Operand::Register(Register::B),
+                },
+            },
+            0x51 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 2,
+                    destination: Operand::Register(Register::C),
+                },
+            },
+            0x52 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 2,
+                    destination: Operand::Register(Register::D),
+                },
+            },
+            0x53 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 2,
+                    destination: Operand::Register(Register::E),
+                },
+            },
+            0x54 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 2,
+                    destination: Operand::Register(Register::H),
+                },
+            },
+            0x55 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 2,
+                    destination: Operand::Register(Register::L),
+                },
+            },
+            0x56 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 2,
+                    destination: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0x57 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 2,
+                    destination: Operand::Register(Register::A),
+                },
+            },
+            0x58 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 3,
+                    destination: Operand::Register(Register::B),
+                },
+            },
+            0x59 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 3,
+                    destination: Operand::Register(Register::C),
+                },
+            },
+            0x5a => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 3,
+                    destination: Operand::Register(Register::D),
+                },
+            },
+            0x5b => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 3,
+                    destination: Operand::Register(Register::E),
+                },
+            },
+            0x5c => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 3,
+                    destination: Operand::Register(Register::H),
+                },
+            },
+            0x5d => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 3,
+                    destination: Operand::Register(Register::L),
+                },
+            },
+            0x5e => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 3,
+                    destination: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0x5f => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 3,
+                    destination: Operand::Register(Register::A),
+                },
+            },
+            0x60 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 4,
+                    destination: Operand::Register(Register::B),
+                },
+            },
+            0x61 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 4,
+                    destination: Operand::Register(Register::C),
+                },
+            },
+            0x62 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 4,
+                    destination: Operand::Register(Register::D),
+                },
+            },
+            0x63 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 4,
+                    destination: Operand::Register(Register::E),
+                },
+            },
+            0x64 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 4,
+                    destination: Operand::Register(Register::H),
+                },
+            },
+            0x65 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 4,
+                    destination: Operand::Register(Register::L),
+                },
+            },
+            0x66 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 4,
+                    destination: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0x67 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 4,
+                    destination: Operand::Register(Register::A),
+                },
+            },
+            0x68 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 5,
+                    destination: Operand::Register(Register::B),
+                },
+            },
+            0x69 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 5,
+                    destination: Operand::Register(Register::C),
+                },
+            },
+            0x6a => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 5,
+                    destination: Operand::Register(Register::D),
+                },
+            },
+            0x6b => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 5,
+                    destination: Operand::Register(Register::E),
+                },
+            },
+            0x6c => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 5,
+                    destination: Operand::Register(Register::H),
+                },
+            },
+            0x6d => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 5,
+                    destination: Operand::Register(Register::L),
+                },
+            },
+            0x6e => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 5,
+                    destination: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0x6f => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 5,
+                    destination: Operand::Register(Register::A),
+                },
+            },
+            0x70 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 6,
+                    destination: Operand::Register(Register::B),
+                },
+            },
+            0x71 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 6,
+                    destination: Operand::Register(Register::C),
+                },
+            },
+            0x72 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 6,
+                    destination: Operand::Register(Register::D),
+                },
+            },
+            0x73 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 6,
+                    destination: Operand::Register(Register::E),
+                },
+            },
+            0x74 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 6,
+                    destination: Operand::Register(Register::H),
+                },
+            },
+            0x75 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 6,
+                    destination: Operand::Register(Register::L),
+                },
+            },
+            0x76 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 6,
+                    destination: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0x77 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 6,
+                    destination: Operand::Register(Register::A),
+                },
+            },
+            0x78 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 7,
+                    destination: Operand::Register(Register::B),
+                },
+            },
+            0x79 => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 7,
+                    destination: Operand::Register(Register::C),
+                },
+            },
+            0x7a => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 7,
+                    destination: Operand::Register(Register::D),
+                },
+            },
+            0x7b => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 7,
+                    destination: Operand::Register(Register::E),
+                },
+            },
+            0x7c => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 7,
+                    destination: Operand::Register(Register::H),
+                },
+            },
+            0x7d => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 7,
+                    destination: Operand::Register(Register::L),
+                },
+            },
+            0x7e => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 7,
+                    destination: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0x7f => Instruction {
+                address,
+                op: Opcode::Bit {
+                    bit: 7,
+                    destination: Operand::Register(Register::A),
+                },
+            },
+            0x80 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 0,
+                    destination: Operand::Register(Register::B),
+                },
+            },
+            0x81 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 0,
+                    destination: Operand::Register(Register::C),
+                },
+            },
+            0x82 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 0,
+                    destination: Operand::Register(Register::D),
+                },
+            },
+            0x83 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 0,
+                    destination: Operand::Register(Register::E),
+                },
+            },
+            0x84 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 0,
+                    destination: Operand::Register(Register::H),
+                },
+            },
+            0x85 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 0,
+                    destination: Operand::Register(Register::L),
+                },
+            },
+            0x86 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 0,
+                    destination: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0x87 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 0,
+                    destination: Operand::Register(Register::A),
+                },
+            },
+            0x88 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 1,
+                    destination: Operand::Register(Register::B),
+                },
+            },
+            0x89 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 1,
+                    destination: Operand::Register(Register::C),
+                },
+            },
+            0x8a => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 1,
+                    destination: Operand::Register(Register::D),
+                },
+            },
+            0x8b => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 1,
+                    destination: Operand::Register(Register::E),
+                },
+            },
+            0x8c => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 1,
+                    destination: Operand::Register(Register::H),
+                },
+            },
+            0x8d => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 1,
+                    destination: Operand::Register(Register::L),
+                },
+            },
+            0x8e => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 1,
+                    destination: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0x8f => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 1,
+                    destination: Operand::Register(Register::A),
+                },
+            },
+            0x90 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 2,
+                    destination: Operand::Register(Register::B),
+                },
+            },
+            0x91 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 2,
+                    destination: Operand::Register(Register::C),
+                },
+            },
+            0x92 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 2,
+                    destination: Operand::Register(Register::D),
+                },
+            },
+            0x93 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 2,
+                    destination: Operand::Register(Register::E),
+                },
+            },
+            0x94 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 2,
+                    destination: Operand::Register(Register::H),
+                },
+            },
+            0x95 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 2,
+                    destination: Operand::Register(Register::L),
+                },
+            },
+            0x96 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 2,
+                    destination: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0x97 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 2,
+                    destination: Operand::Register(Register::A),
+                },
+            },
+            0x98 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 3,
+                    destination: Operand::Register(Register::B),
+                },
+            },
+            0x99 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 3,
+                    destination: Operand::Register(Register::C),
+                },
+            },
+            0x9a => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 3,
+                    destination: Operand::Register(Register::D),
+                },
+            },
+            0x9b => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 3,
+                    destination: Operand::Register(Register::E),
+                },
+            },
+            0x9c => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 3,
+                    destination: Operand::Register(Register::H),
+                },
+            },
+            0x9d => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 3,
+                    destination: Operand::Register(Register::L),
+                },
+            },
+            0x9e => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 3,
+                    destination: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0x9f => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 3,
+                    destination: Operand::Register(Register::A),
+                },
+            },
+            0xa0 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 4,
+                    destination: Operand::Register(Register::B),
+                },
+            },
+            0xa1 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 4,
+                    destination: Operand::Register(Register::C),
+                },
+            },
+            0xa2 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 4,
+                    destination: Operand::Register(Register::D),
+                },
+            },
+            0xa3 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 4,
+                    destination: Operand::Register(Register::E),
+                },
+            },
+            0xa4 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 4,
+                    destination: Operand::Register(Register::H),
+                },
+            },
+            0xa5 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 4,
+                    destination: Operand::Register(Register::L),
+                },
+            },
+            0xa6 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 4,
+                    destination: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0xa7 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 4,
+                    destination: Operand::Register(Register::A),
+                },
+            },
+            0xa8 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 5,
+                    destination: Operand::Register(Register::B),
+                },
+            },
+            0xa9 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 5,
+                    destination: Operand::Register(Register::C),
+                },
+            },
+            0xaa => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 5,
+                    destination: Operand::Register(Register::D),
+                },
+            },
+            0xab => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 5,
+                    destination: Operand::Register(Register::E),
+                },
+            },
+            0xac => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 5,
+                    destination: Operand::Register(Register::H),
+                },
+            },
+            0xad => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 5,
+                    destination: Operand::Register(Register::L),
+                },
+            },
+            0xae => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 5,
+                    destination: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0xaf => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 5,
+                    destination: Operand::Register(Register::A),
+                },
+            },
+            0xb0 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 6,
+                    destination: Operand::Register(Register::B),
+                },
+            },
+            0xb1 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 6,
+                    destination: Operand::Register(Register::C),
+                },
+            },
+            0xb2 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 6,
+                    destination: Operand::Register(Register::D),
+                },
+            },
+            0xb3 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 6,
+                    destination: Operand::Register(Register::E),
+                },
+            },
+            0xb4 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 6,
+                    destination: Operand::Register(Register::H),
+                },
+            },
+            0xb5 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 6,
+                    destination: Operand::Register(Register::L),
+                },
+            },
+            0xb6 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 6,
+                    destination: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0xb7 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 6,
+                    destination: Operand::Register(Register::A),
+                },
+            },
+            0xb8 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 7,
+                    destination: Operand::Register(Register::B),
+                },
+            },
+            0xb9 => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 7,
+                    destination: Operand::Register(Register::C),
+                },
+            },
+            0xba => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 7,
+                    destination: Operand::Register(Register::D),
+                },
+            },
+            0xbb => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 7,
+                    destination: Operand::Register(Register::E),
+                },
+            },
+            0xbc => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 7,
+                    destination: Operand::Register(Register::H),
+                },
+            },
+            0xbd => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 7,
+                    destination: Operand::Register(Register::L),
+                },
+            },
+            0xbe => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 7,
+                    destination: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0xbf => Instruction {
+                address,
+                op: Opcode::Res {
+                    bit: 7,
+                    destination: Operand::Register(Register::A),
+                },
+            },
+            0xc0 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 0,
+                    destination: Operand::Register(Register::B),
+                },
+            },
+            0xc1 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 0,
+                    destination: Operand::Register(Register::C),
+                },
+            },
+            0xc2 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 0,
+                    destination: Operand::Register(Register::D),
+                },
+            },
+            0xc3 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 0,
+                    destination: Operand::Register(Register::E),
+                },
+            },
+            0xc4 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 0,
+                    destination: Operand::Register(Register::H),
+                },
+            },
+            0xc5 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 0,
+                    destination: Operand::Register(Register::L),
+                },
+            },
+            0xc6 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 0,
+                    destination: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0xc7 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 0,
+                    destination: Operand::Register(Register::A),
+                },
+            },
+            0xc8 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 1,
+                    destination: Operand::Register(Register::B),
+                },
+            },
+            0xc9 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 1,
+                    destination: Operand::Register(Register::C),
+                },
+            },
+            0xca => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 1,
+                    destination: Operand::Register(Register::D),
+                },
+            },
+            0xcb => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 1,
+                    destination: Operand::Register(Register::E),
+                },
+            },
+            0xcc => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 1,
+                    destination: Operand::Register(Register::H),
+                },
+            },
+            0xcd => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 1,
+                    destination: Operand::Register(Register::L),
+                },
+            },
+            0xce => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 1,
+                    destination: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0xcf => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 1,
+                    destination: Operand::Register(Register::A),
+                },
+            },
+            0xd0 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 2,
+                    destination: Operand::Register(Register::B),
+                },
+            },
+            0xd1 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 2,
+                    destination: Operand::Register(Register::C),
+                },
+            },
+            0xd2 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 2,
+                    destination: Operand::Register(Register::D),
+                },
+            },
+            0xd3 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 2,
+                    destination: Operand::Register(Register::E),
+                },
+            },
+            0xd4 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 2,
+                    destination: Operand::Register(Register::H),
+                },
+            },
+            0xd5 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 2,
+                    destination: Operand::Register(Register::L),
+                },
+            },
+            0xd6 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 2,
+                    destination: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0xd7 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 2,
+                    destination: Operand::Register(Register::A),
+                },
+            },
+            0xd8 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 3,
+                    destination: Operand::Register(Register::B),
+                },
+            },
+            0xd9 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 3,
+                    destination: Operand::Register(Register::C),
+                },
+            },
+            0xda => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 3,
+                    destination: Operand::Register(Register::D),
+                },
+            },
+            0xdb => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 3,
+                    destination: Operand::Register(Register::E),
+                },
+            },
+            0xdc => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 3,
+                    destination: Operand::Register(Register::H),
+                },
+            },
+            0xdd => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 3,
+                    destination: Operand::Register(Register::L),
+                },
+            },
+            0xde => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 3,
+                    destination: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0xdf => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 3,
+                    destination: Operand::Register(Register::A),
+                },
+            },
+            0xe0 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 4,
+                    destination: Operand::Register(Register::B),
+                },
+            },
+            0xe1 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 4,
+                    destination: Operand::Register(Register::C),
+                },
+            },
+            0xe2 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 4,
+                    destination: Operand::Register(Register::D),
+                },
+            },
+            0xe3 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 4,
+                    destination: Operand::Register(Register::E),
+                },
+            },
+            0xe4 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 4,
+                    destination: Operand::Register(Register::H),
+                },
+            },
+            0xe5 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 4,
+                    destination: Operand::Register(Register::L),
+                },
+            },
+            0xe6 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 4,
+                    destination: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0xe7 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 4,
+                    destination: Operand::Register(Register::A),
+                },
+            },
+            0xe8 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 5,
+                    destination: Operand::Register(Register::B),
+                },
+            },
+            0xe9 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 5,
+                    destination: Operand::Register(Register::C),
+                },
+            },
+            0xea => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 5,
+                    destination: Operand::Register(Register::D),
+                },
+            },
+            0xeb => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 5,
+                    destination: Operand::Register(Register::E),
+                },
+            },
+            0xec => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 5,
+                    destination: Operand::Register(Register::H),
+                },
+            },
+            0xed => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 5,
+                    destination: Operand::Register(Register::L),
+                },
+            },
+            0xee => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 5,
+                    destination: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0xef => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 5,
+                    destination: Operand::Register(Register::A),
+                },
+            },
+            0xf0 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 6,
+                    destination: Operand::Register(Register::B),
+                },
+            },
+            0xf1 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 6,
+                    destination: Operand::Register(Register::C),
+                },
+            },
+            0xf2 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 6,
+                    destination: Operand::Register(Register::D),
+                },
+            },
+            0xf3 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 6,
+                    destination: Operand::Register(Register::E),
+                },
+            },
+            0xf4 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 6,
+                    destination: Operand::Register(Register::H),
+                },
+            },
+            0xf5 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 6,
+                    destination: Operand::Register(Register::L),
+                },
+            },
+            0xf6 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 6,
+                    destination: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0xf7 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 6,
+                    destination: Operand::Register(Register::A),
+                },
+            },
+            0xf8 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 7,
+                    destination: Operand::Register(Register::B),
+                },
+            },
+            0xf9 => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 7,
+                    destination: Operand::Register(Register::C),
+                },
+            },
+            0xfa => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 7,
+                    destination: Operand::Register(Register::D),
+                },
+            },
+            0xfb => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 7,
+                    destination: Operand::Register(Register::E),
+                },
+            },
+            0xfc => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 7,
+                    destination: Operand::Register(Register::H),
+                },
+            },
+            0xfd => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 7,
+                    destination: Operand::Register(Register::L),
+                },
+            },
+            0xfe => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 7,
+                    destination: Operand::Deref(DerefOperand::Register(Register::Hl)),
+                },
+            },
+            0xff => Instruction {
+                address,
+                op: Opcode::Set {
+                    bit: 7,
+                    destination: Operand::Register(Register::A),
+                },
+            },
         }
     }
 }
 
 impl Display for Instruction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let size = self.op.size();
         write!(
             f,
             "0x{:04x} - {} (size = {})",
             self.address,
-            self.op.print(self.address + self.size as u16),
-            self.size
+            self.op.print(self.address + size as u16),
+            size
         )
     }
 }

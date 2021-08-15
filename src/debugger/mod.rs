@@ -246,8 +246,7 @@ impl Debugger {
                             self.gbc.print_instructions(address, length);
                         }
                         "header" => {
-                            let cart_rc = self.gbc.get_cartridge();
-                            let cart = cart_rc.lock().unwrap();
+                            let cart = self.gbc.get_cartridge();
                             println!("Cartridge: {}", cart.title);
                             println!("\tManufacturer Code: {:?}", cart.manufacturer_code);
                             println!(

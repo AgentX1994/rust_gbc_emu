@@ -357,8 +357,7 @@ impl Lcd {
         }
         if self.ly == 144 {
             vblank_interrupt = true;
-        }
-        if self.ly == 154 {
+        } else if self.ly == 154 {
             self.ly = 0;
         }
 
