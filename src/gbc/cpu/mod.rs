@@ -15,17 +15,19 @@ const HALF_CARRY_BIT_MASK: u8 = 1 << 5;
 const SUBTRACTION_BIT_MASK: u8 = 1 << 6;
 const ZERO_BIT_MASK: u8 = 1 << 7;
 
+use crate::gbc::utils::Flag;
+
 #[derive(Debug, Default)]
 pub struct InterruptRequest {
-    pub vblank: bool,
-    pub stat: bool,
-    pub timer: bool,
-    pub serial: bool,
-    pub joypad: bool,
+    pub vblank: Flag,
+    pub stat: Flag,
+    pub timer: Flag,
+    pub serial: Flag,
+    pub joypad: Flag,
 }
 
 #[derive(Debug, PartialEq)]
-pub enum CpuState {
+pub enum State {
     Running,
     Halted,
     Stopped,
@@ -40,7 +42,7 @@ pub struct Cpu {
     hl: RegisterStorage,
     pc: u16,
     sp: u16,
-    state: CpuState,
+    state: State,
     interrupts_enabled: bool,
 }
 
@@ -54,7 +56,7 @@ impl Default for Cpu {
             hl: RegisterStorage::new(0x014d),
             pc: 0x100,
             sp: 0xfffe,
-            state: CpuState::Running,
+            state: State::Running,
             interrupts_enabled: false,
         }
     }
@@ -64,27 +66,31 @@ const INTERRUPT_ENABLE_REGISTER_ADDRESS: u16 = 0xffff;
 const INTERRUPT_FLAGS_REGISTER_ADDRESS: u16 = 0xff0f;
 
 impl Cpu {
+    #[must_use]
     pub fn new(show_instructions: bool) -> Self {
-        let mut cpu = Self::default();
-        cpu.show_instructions = show_instructions;
-        cpu
+        Self {
+            show_instructions,
+            ..Self::default()
+        }
     }
 
     pub fn interrupt(&mut self, memory_bus: &mut MemoryBus, interrupt_number: u8) {
         assert!(interrupt_number < 5);
         let interrupts_enabled = memory_bus.read_u8(INTERRUPT_ENABLE_REGISTER_ADDRESS);
         let this_interrupt_enabled = (interrupts_enabled & (1 << interrupt_number)) != 0;
-        if self.state == CpuState::Halted && this_interrupt_enabled {
+
+        // If this interrupt is enabled, then wake the CPU from Halt,
+        // If the CPU is stopped, then the interrupt must be number 4 (joypad)
+        if (self.state == State::Halted
+            || (self.state == State::Stopped && interrupt_number == 4))
+            && this_interrupt_enabled
+        {
             // println!(
             //     "Un-Halted by interrupt {} ({})",
             //     interrupt_number,
             //     Self::interrupt_number_to_string(interrupt_number)
             // );
-            self.state = CpuState::Running;
-        } else if self.state == CpuState::Stopped && interrupt_number == 4 && this_interrupt_enabled
-        {
-            // Joypad can interrupt from Stopped
-            self.state = CpuState::Running;
+            self.state = State::Running;
         }
         let mut interrupt_flags = memory_bus.read_u8(INTERRUPT_FLAGS_REGISTER_ADDRESS);
         Self::set_bit(interrupt_number, &mut interrupt_flags);
@@ -92,37 +98,40 @@ impl Cpu {
     }
 
     pub fn request_interrupts(&mut self, memory_bus: &mut MemoryBus, requests: &InterruptRequest) {
-        if requests.vblank {
-            self.interrupt(memory_bus, 0)
+        if requests.vblank.to_bool() {
+            self.interrupt(memory_bus, 0);
         }
-        if requests.stat {
-            self.interrupt(memory_bus, 1)
+        if requests.stat.to_bool() {
+            self.interrupt(memory_bus, 1);
         }
-        if requests.timer {
-            self.interrupt(memory_bus, 2)
+        if requests.timer.to_bool() {
+            self.interrupt(memory_bus, 2);
         }
-        if requests.serial {
-            self.interrupt(memory_bus, 3)
+        if requests.serial.to_bool() {
+            self.interrupt(memory_bus, 3);
         }
-        if requests.joypad {
-            self.interrupt(memory_bus, 4)
+        if requests.joypad.to_bool() {
+            self.interrupt(memory_bus, 4);
         }
     }
 
+    #[must_use]
     pub fn get_program_counter(&self) -> u16 {
         self.pc
     }
 
-    pub fn get_instruction_at_address(&self, memory_bus: &MemoryBus, address: u16) -> Instruction {
+    #[must_use]
+    pub fn get_instruction_at_address(memory_bus: &MemoryBus, address: u16) -> Instruction {
         Instruction::new(address, memory_bus)
     }
 
+    #[must_use]
     pub fn get_next_instruction(&self, memory_bus: &MemoryBus) -> Instruction {
-        self.get_instruction_at_address(memory_bus, self.pc)
+        Self::get_instruction_at_address(memory_bus, self.pc)
     }
 
     pub fn single_step(&mut self, memory_bus: &mut MemoryBus) -> u64 {
-        if self.state != CpuState::Running {
+        if self.state != State::Running {
             return 1;
         }
 
@@ -138,18 +147,21 @@ impl Cpu {
         self.execute_instruction(memory_bus, insn)
     }
 
+    #[allow(clippy::cast_possible_wrap)]
+    #[allow(clippy::cast_possible_truncation)]
+    #[allow(clippy::cast_sign_loss)]
     fn execute_instruction(&mut self, memory_bus: &mut MemoryBus, insn: Instruction) -> u64 {
-        self.pc += insn.size() as u16;
+        self.pc += u16::from(insn.size());
 
         match insn.op {
             Opcode::Unknown { opcode: _ } => panic!("Unknown instruction! {}", insn),
             Opcode::Nop => 4,
             Opcode::Stop => {
-                self.state = CpuState::Stopped;
+                self.state = State::Stopped;
                 4
             }
             Opcode::Halt => {
-                self.state = CpuState::Halted;
+                self.state = State::Halted;
                 4
             }
             Opcode::Ld8 {
@@ -220,7 +232,7 @@ impl Cpu {
                             if r_dest != Register::A {
                                 panic!("Destination must be A for load from (0xff00+n)!");
                             }
-                            let v = memory_bus.read_u8(0xff00u16.wrapping_add(offset as u16));
+                            let v = memory_bus.read_u8(0xff00_u16.wrapping_add(u16::from(offset)));
                             self.set_a(v);
                             12
                         }
@@ -229,11 +241,11 @@ impl Cpu {
                                 panic!("Destination must be A for load from (0xff00+C)!");
                             }
                             let v = memory_bus
-                                .read_u8(0xff00u16.wrapping_add(self.bc.get_low() as u16));
+                                .read_u8(0xff00_u16.wrapping_add(u16::from(self.bc.get_low())));
                             self.set_a(v);
                             8
                         }
-                        _ => unreachable!(),
+                        DerefOperand::Register(_) => unreachable!(),
                     },
                     _ => unreachable!(),
                 },
@@ -291,7 +303,7 @@ impl Cpu {
                             panic!("Source must be A for load to (0xff00+n)!");
                         }
                         let v = self.get_a();
-                        memory_bus.write_u8(0xff00u16.wrapping_add(offset as u16), v);
+                        memory_bus.write_u8(0xff00_u16.wrapping_add(u16::from(offset)), v);
                         8
                     }
                     DerefOperand::Ff00PlusC => {
@@ -299,7 +311,7 @@ impl Cpu {
                             panic!("Source must be A for load to (0xff00+C)!");
                         }
                         let v = self.get_a();
-                        memory_bus.write_u8(0xff00u16.wrapping_add(self.bc.get_low() as u16), v);
+                        memory_bus.write_u8(0xff00_u16.wrapping_add(u16::from(self.bc.get_low())), v);
                         8
                     }
                 },
@@ -339,12 +351,13 @@ impl Cpu {
                                 u16::from_le_bytes([d_u8, 0x00])
                             };
                             let (sum, _) = self.sp.overflowing_add(d_u16);
-                            let zero = false;
-                            let subtraction = false;
+                            self.clear_zero_flag();
+                            self.clear_subtraction_flag();
                             // This instruction uses carry and half carry like it was an 8 bit add
-                            let carry = (self.sp & 0xff) + (d_u16 & 0xff) > 0xff;
-                            let half_carry = (self.sp & 0xf) + (d_u16 & 0xf) > 0xf;
-                            self.set_flags_from_bools(zero, subtraction, half_carry, carry);
+                            self.set_carry_flag_from_bool((self.sp & 0xff) + (d_u16 & 0xff) > 0xff);
+                            self.set_half_carry_flag_from_bool(
+                                (self.sp & 0xf) + (d_u16 & 0xf) > 0xf,
+                            );
                             self.set_r16(&r, sum);
                             12
                         }
@@ -375,7 +388,7 @@ impl Cpu {
                 condition,
                 destination,
             } => {
-                if self.check_condition(condition) {
+                if self.check_condition(&condition) {
                     self.pc = destination;
                     16
                 } else {
@@ -383,12 +396,12 @@ impl Cpu {
                 }
             }
             Opcode::Jr { offset } => {
-                self.pc = (self.pc as i32 + offset as i32) as u16;
+                self.pc = (i32::from(self.pc) + i32::from(offset)) as u16;
                 12
             }
             Opcode::JrCond { condition, offset } => {
-                if self.check_condition(condition) {
-                    self.pc = (self.pc as i32 + offset as i32) as u16;
+                if self.check_condition(&condition) {
+                    self.pc = (i32::from(self.pc) + i32::from(offset)) as u16;
                     12
                 } else {
                     8
@@ -402,7 +415,7 @@ impl Cpu {
                 condition,
                 destination,
             } => {
-                if self.check_condition(condition) {
+                if self.check_condition(&condition) {
                     self.call(memory_bus, destination);
                     24
                 } else {
@@ -414,7 +427,7 @@ impl Cpu {
                 16
             }
             Opcode::RetCond { condition } => {
-                if self.check_condition(condition) {
+                if self.check_condition(&condition) {
                     self.ret(memory_bus);
                     20
                 } else {
@@ -460,7 +473,7 @@ impl Cpu {
                 16
             }
             Opcode::Rst { vector } => {
-                self.call(memory_bus, vector as u16);
+                self.call(memory_bus, u16::from(vector));
                 16
             }
             Opcode::Bit { bit, destination } => {
@@ -540,11 +553,10 @@ impl Cpu {
                             };
                             let hl = self.hl.get_u16();
                             let (sum, carry) = hl.overflowing_add(v);
-                            let zero = self.get_zero_flag();
-                            let subtraction = false;
-                            let half_carry = (hl & 0xfff) + (v & 0xfff) > 0xfff;
+                            self.clear_subtraction_flag();
+                            self.set_carry_flag_from_bool(carry);
+                            self.set_half_carry_flag_from_bool((hl & 0xfff) + (v & 0xfff) > 0xfff);
                             self.hl.set_u16(sum);
-                            self.set_flags_from_bools(zero, subtraction, half_carry, carry);
                             8
                         } else {
                             unreachable!()
@@ -560,13 +572,14 @@ impl Cpu {
                                 u16::from_le_bytes([d_u8, 0x00])
                             };
                             let (sum, _) = self.sp.overflowing_add(d_u16);
-                            let zero = false;
-                            let subtraction = false;
+                            self.clear_zero_flag();
+                            self.clear_subtraction_flag();
                             // This instruction uses carry and half carry like it was an 8 bit add
-                            let carry = (self.sp & 0xff) + (d_u16 & 0xff) > 0xff;
-                            let half_carry = (self.sp & 0xf) + (d_u16 & 0xf) > 0xf;
+                            self.set_carry_flag_from_bool((self.sp & 0xff) + (d_u16 & 0xff) > 0xff);
+                            self.set_half_carry_flag_from_bool(
+                                (self.sp & 0xf) + (d_u16 & 0xf) > 0xf,
+                            );
                             self.sp = sum;
-                            self.set_flags_from_bools(zero, subtraction, half_carry, carry);
                             16
                         } else {
                             unreachable!()
@@ -623,22 +636,18 @@ impl Cpu {
                     let v = self.get_r8(&r);
                     let (res, _) = v.overflowing_add(0xff); // - 1 is the same as + 0xff
                     self.set_r8(&r, res);
-                    let zero = res == 0;
-                    let subtraction = true;
-                    let half_carry = (res & 0xf) == 0xf;
-                    let carry = self.get_carry_flag();
-                    self.set_flags_from_bools(zero, subtraction, half_carry, carry);
+                    self.set_zero_flag_from_bool(res == 0);
+                    self.set_subtraction_flag();
+                    self.set_half_carry_flag_from_bool((res & 0xf) == 0xf);
                     4
                 }
                 Operand::Deref(DerefOperand::Register(Register::Hl)) => {
                     let v = memory_bus.read_u8(self.hl.get_u16());
                     let (res, _) = v.overflowing_add(0xff); // - 1 is the same as + 0xff
                     memory_bus.write_u8(self.hl.get_u16(), res);
-                    let zero = res == 0;
-                    let subtraction = true;
-                    let half_carry = (res & 0xf) == 0xf;
-                    let carry = self.get_carry_flag();
-                    self.set_flags_from_bools(zero, subtraction, half_carry, carry);
+                    self.set_zero_flag_from_bool(res == 0);
+                    self.set_subtraction_flag();
+                    self.set_half_carry_flag_from_bool((res & 0xf) == 0xf);
                     12
                 }
                 _ => unreachable!(),
@@ -692,10 +701,13 @@ impl Cpu {
 
                 let val = {
                     let a = self.get_a_mut();
-                    *a = *a & v;
+                    *a &= v;
                     *a
                 };
-                self.set_flags_from_bools(val == 0, false, true, false);
+                self.set_zero_flag_from_bool(val == 0);
+                self.clear_subtraction_flag();
+                self.set_half_carry_flag();
+                self.clear_carry_flag();
                 cycles
             }
             Opcode::Xor { operand } => {
@@ -703,10 +715,13 @@ impl Cpu {
 
                 let val = {
                     let a = self.get_a_mut();
-                    *a = *a ^ v;
+                    *a ^= v;
                     *a
                 };
-                self.set_flags_from_bools(val == 0, false, false, false);
+                self.set_zero_flag_from_bool(val == 0);
+                self.clear_subtraction_flag();
+                self.clear_carry_flag();
+                self.clear_half_carry_flag();
                 cycles
             }
             Opcode::Or { operand } => {
@@ -714,22 +729,23 @@ impl Cpu {
 
                 let val = {
                     let a = self.get_a_mut();
-                    *a = *a | v;
+                    *a |= v;
                     *a
                 };
-                self.set_flags_from_bools(val == 0, false, false, false);
+                self.set_zero_flag_from_bool(val == 0);
+                self.clear_subtraction_flag();
+                self.clear_carry_flag();
+                self.clear_half_carry_flag();
                 cycles
             }
             Opcode::Cp { operand } => {
                 let (v, cycles) = self.extract_u8_arithmetic_operand(memory_bus, operand);
                 // Compute A - v, but only set flags according to the result
                 let a = self.get_a();
-                let is_zero = a == v;
-                let is_half_carry = (a % 16) < (v % 16);
-                let is_carry = a < v;
-                let is_subtraction = true;
-
-                self.set_flags_from_bools(is_zero, is_subtraction, is_half_carry, is_carry);
+                self.set_zero_flag_from_bool(a == v);
+                self.set_subtraction_flag();
+                self.set_carry_flag_from_bool(a < v);
+                self.set_half_carry_flag_from_bool((a % 16) < (v % 16));
                 cycles
             }
             Opcode::Cpl => {
@@ -742,21 +758,21 @@ impl Cpu {
                 // from https://forums.nesdev.com/viewtopic.php?t=15944
                 // If not subtraction
                 let mut a = self.get_a();
-                if !self.get_subtraction_flag() {
-                    if self.get_carry_flag() || a > 0x99 {
-                        a = a.wrapping_add(0x60);
-                        self.set_carry_flag();
-                    }
-                    if self.get_half_carry_flag() || (a & 0xf) > 0x9 {
-                        a = a.wrapping_add(0x6);
-                    }
-                } else {
+                if self.get_subtraction_flag() {
                     if self.get_carry_flag() {
                         a = a.wrapping_sub(0x60);
                         self.set_carry_flag();
                     }
                     if self.get_half_carry_flag() {
                         a = a.wrapping_sub(0x6);
+                    }
+                } else {
+                    if self.get_carry_flag() || a > 0x99 {
+                        a = a.wrapping_add(0x60);
+                        self.set_carry_flag();
+                    }
+                    if self.get_half_carry_flag() || (a & 0xf) > 0x9 {
+                        a = a.wrapping_add(0x6);
                     }
                 }
 
@@ -1021,7 +1037,7 @@ impl Cpu {
                     let mut v = self.get_r8(&r);
                     let low_bit = v & 1;
                     let carry = low_bit == 1;
-                    v = v >> 1;
+                    v >>= 1;
                     self.set_r8(&r, v);
 
                     // only the carry and zero flags should be set after this;
@@ -1034,7 +1050,7 @@ impl Cpu {
                     let mut v = memory_bus.read_u8(self.hl.get_u16());
                     let low_bit = v & 1;
                     let carry = low_bit == 1;
-                    v = v >> 1;
+                    v >>= 1;
                     memory_bus.write_u8(self.hl.get_u16(), v);
 
                     // only the carry and zero flags should be set after this;
@@ -1074,7 +1090,7 @@ impl Cpu {
         }
     }
 
-    fn check_condition(&self, condition: ConditionType) -> bool {
+    fn check_condition(&self, condition: &ConditionType) -> bool {
         match condition {
             instruction::ConditionType::NonZero => !self.get_zero_flag(),
             instruction::ConditionType::Zero => self.get_zero_flag(),
@@ -1092,7 +1108,7 @@ impl Cpu {
         let v = memory_bus.read_mem(self.sp, 2);
         self.sp = self.sp.wrapping_add(2);
         assert!(v.len() == 2);
-        ((v[1] as u16) << 8) | (v[0] as u16)
+        (u16::from(v[1]) << 8) | u16::from(v[0])
     }
 
     fn call(&mut self, memory_bus: &mut MemoryBus, address: u16) {
@@ -1111,12 +1127,12 @@ impl Cpu {
 
     fn set_bit(bit: u8, v: &mut u8) {
         assert!(bit < 8);
-        *v = *v | (1 << bit);
+        *v |= 1 << bit;
     }
 
     fn reset_bit(bit: u8, v: &mut u8) {
         assert!(bit < 8);
-        *v = *v & !(1 << bit);
+        *v &= !(1 << bit);
     }
 
     fn get_flags(&self) -> u8 {
@@ -1127,35 +1143,12 @@ impl Cpu {
         self.af.set_low(flags);
     }
 
-    fn set_flags_from_bools(
-        &mut self,
-        zero: bool,
-        subtraction: bool,
-        half_carry: bool,
-        carry: bool,
-    ) {
-        let mut v = 0u8;
-        if zero {
-            v |= ZERO_BIT_MASK
-        }
-        if subtraction {
-            v |= SUBTRACTION_BIT_MASK
-        }
-        if half_carry {
-            v |= HALF_CARRY_BIT_MASK
-        }
-        if carry {
-            v |= CARRY_BIT_MASK
-        }
-        self.set_flags(v);
-    }
-
     fn add8_with_carry(&mut self, b: u8, use_carry: bool, subtraction: bool) {
         let a = self.af.get_high();
         let c = if use_carry && self.get_carry_flag() {
-            1u8
+            1_u8
         } else {
-            0u8
+            0_u8
         };
         let operand = if subtraction { (!b).wrapping_add(1) } else { b };
         let c_operand = if subtraction { (!c).wrapping_add(1) } else { c };
@@ -1181,7 +1174,10 @@ impl Cpu {
             carry1 || carry2
         };
         self.af.set_high(sum as u8);
-        self.set_flags_from_bools(zero, subtraction, half_carry, carry);
+        self.set_zero_flag_from_bool(zero);
+        self.set_subtraction_flag_from_bool(subtraction);
+        self.set_carry_flag_from_bool(carry);
+        self.set_half_carry_flag_from_bool(half_carry);
     }
 
     fn extract_u8_arithmetic_operand(
@@ -1254,35 +1250,35 @@ impl Cpu {
 
     fn set_zero_flag_from_bool(&mut self, zero: bool) {
         if zero {
-            self.set_zero_flag()
+            self.set_zero_flag();
         } else {
-            self.clear_zero_flag()
+            self.clear_zero_flag();
         }
     }
 
     #[allow(dead_code)]
     fn set_subtraction_flag_from_bool(&mut self, subtraction: bool) {
         if subtraction {
-            self.set_subtraction_flag()
+            self.set_subtraction_flag();
         } else {
-            self.clear_subtraction_flag()
+            self.clear_subtraction_flag();
         }
     }
 
     #[allow(dead_code)]
     fn set_half_carry_flag_from_bool(&mut self, half_carry: bool) {
         if half_carry {
-            self.set_half_carry_flag()
+            self.set_half_carry_flag();
         } else {
-            self.clear_half_carry_flag()
+            self.clear_half_carry_flag();
         }
     }
 
     fn set_carry_flag_from_bool(&mut self, carry: bool) {
         if carry {
-            self.set_carry_flag()
+            self.set_carry_flag();
         } else {
-            self.clear_carry_flag()
+            self.clear_carry_flag();
         }
     }
 
@@ -1405,6 +1401,7 @@ impl Cpu {
         // are higher priority
         let mut interrupt_flags = memory_bus.read_u8(INTERRUPT_FLAGS_REGISTER_ADDRESS)
             & memory_bus.read_u8(INTERRUPT_ENABLE_REGISTER_ADDRESS);
+        #[allow(clippy::cast_possible_truncation)]
         let interrupt_number = interrupt_flags.trailing_zeros() as u8;
         assert!(interrupt_number < 5);
         // println!(
@@ -1421,7 +1418,7 @@ impl Cpu {
         // 2 cycles of nop does nothing
         // Calling the interrupt handler should accomplish the last two steps
         // Interrupt handler addresses are 0x40, 0x48, 0x50, 0x58, 0x60.
-        self.call(memory_bus, (0x40 + 8 * interrupt_number) as u16);
+        self.call(memory_bus, u16::from(0x40 + 8 * interrupt_number));
     }
 
     pub fn dump_state(&self) {
@@ -1429,7 +1426,7 @@ impl Cpu {
         println!("\taf = {} bc = {}", self.af, self.bc);
         println!("\tde = {} hl = {}", self.de, self.hl);
         println!("\tpc = {:04x} sp = {:04x}", self.pc, self.sp);
-        println!("\t\tFlags: {}", self.dump_flags_to_string())
+        println!("\t\tFlags: {}", self.dump_flags_to_string());
     }
 
     fn dump_flags_to_string(&self) -> String {
@@ -1453,45 +1450,9 @@ mod tests {
 
     fn create_default_memory_bus() -> MemoryBus {
         use crate::gbc::cartridge::Cartridge;
-        use crate::gbc::mmio::{
-            apu::Sound, joypad::Joypad, lcd::Lcd, serial::SerialComms, timer::Timer,
-        };
-        use crate::gbc::ppu::PictureProcessingUnit;
         let cartridge = Cartridge::default();
-        let ram = [0u8; 8192];
-        let ppu = PictureProcessingUnit::default();
-        let joypad = Joypad::default();
-        let serial = SerialComms::default();
-        let timer_control = Timer::default();
-        let sound = Sound::default();
-        let lcd = Lcd::default();
-        let vram_select = 0;
-        let disable_boot_rom = false;
-        let vram_dma = [0; 4];
-        let color_palettes = [0; 2];
-        let wram_bank_select = 0;
-        let interrupt_flags = 0;
-        let high_ram = [0u8; 127];
-        let interrupt_enable = 0u8;
 
-        MemoryBus::new(
-            cartridge,
-            ram,
-            ppu,
-            joypad,
-            serial,
-            timer_control,
-            sound,
-            lcd,
-            vram_select,
-            disable_boot_rom,
-            vram_dma,
-            color_palettes,
-            wram_bank_select,
-            interrupt_flags,
-            high_ram,
-            interrupt_enable,
-        )
+        MemoryBus::new(cartridge)
     }
 
     #[test]

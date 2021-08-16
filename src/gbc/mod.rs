@@ -4,6 +4,7 @@ pub mod debug;
 pub mod memory_bus;
 pub mod mmio;
 pub mod ppu;
+pub mod utils;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -14,14 +15,7 @@ use cartridge::Cartridge;
 use cpu::Cpu;
 use debug::{AccessType, BreakReason, Breakpoint};
 use memory_bus::MemoryBus;
-use mmio::{
-    apu::Sound,
-    joypad::Joypad,
-    lcd::{Color, Lcd},
-    serial::SerialComms,
-    timer::Timer,
-};
-use ppu::PictureProcessingUnit;
+use mmio::lcd::Color;
 
 use self::cpu::InterruptRequest;
 
@@ -47,52 +41,20 @@ impl Gbc {
         show_instructions: bool,
     ) -> io::Result<Self> {
         let cartridge = Cartridge::new(rom_path)?;
-        let cartridge = cartridge;
-        let ram = [0; 8192];
-        let ppu = PictureProcessingUnit::default();
-        let joypad = Joypad::default();
-        let serial = SerialComms::default();
-        let timer_control = Timer::default();
-        let sound = Sound::default();
-        let lcd = Lcd::default();
-        let vram_select = 0;
-        let disable_boot_rom = false;
-        let vram_dma = [0; 4];
-        let color_palettes = [0; 2];
-        let wram_bank_select = 0;
-        let interrupt_flags = 0;
-        let high_ram = [0; 127];
-        let interrupt_enable = 0;
         Ok(Gbc {
             running,
             turbo,
             framebuffer,
-            clock_speed: 4194304, // TODO switch based on detected cartridge / config
+            clock_speed: 4_194_304, // TODO switch based on detected cartridge / config
             cpu: Cpu::new(show_instructions),
             cycle_count: 0,
             breakpoints: Vec::new(),
             break_reason: None,
-            memory_bus: MemoryBus::new(
-                cartridge,
-                ram,
-                ppu,
-                joypad,
-                serial,
-                timer_control,
-                sound,
-                lcd,
-                vram_select,
-                disable_boot_rom,
-                vram_dma,
-                color_palettes,
-                wram_bank_select,
-                interrupt_flags,
-                high_ram,
-                interrupt_enable,
-            ),
+            memory_bus: MemoryBus::new(cartridge),
         })
     }
 
+    #[must_use]
     pub fn get_clock_speed(&self) -> u64 {
         self.clock_speed
     }
@@ -108,6 +70,7 @@ impl Gbc {
         self.breakpoints.push(bp);
     }
 
+    #[must_use]
     pub fn list_breakpoints(&self) -> &[Breakpoint] {
         &self.breakpoints[..]
     }
@@ -122,7 +85,7 @@ impl Gbc {
 
     fn check_execute_breakpoints(&mut self) {
         let pc = self.cpu.get_program_counter();
-        for bp in self.breakpoints.iter() {
+        for bp in &self.breakpoints {
             if !bp.access_type.on_execute() {
                 continue;
             }
@@ -147,7 +110,7 @@ impl Gbc {
             cycles_in_this_run += cycles;
             self.check_execute_breakpoints();
             let desired_iteration_time =
-                Duration::from_nanos(cycles * (1_000_000_000u64 / self.clock_speed));
+                Duration::from_nanos(cycles * (1_000_000_000_u64 / self.clock_speed));
             let next_cycle_time = start + desired_iteration_time;
             if !self.turbo {
                 while Instant::now() < next_cycle_time {}
@@ -167,17 +130,19 @@ impl Gbc {
     }
 
     pub fn tick_hardware(&mut self, cycles: u64) -> InterruptRequest {
-        let mut interrupts = InterruptRequest::default();
+        let mut interrupts = InterruptRequest {
+            serial: self.memory_bus.serial.tick(cycles).into(),
+            ..InterruptRequest::default()
+        };
 
-        interrupts.serial = self.memory_bus.serial.tick(cycles);
         let lcd = &mut self.memory_bus.lcd;
         let vblank_and_stat = self.memory_bus.ppu.tick(cycles, lcd);
-        interrupts.vblank = vblank_and_stat.0;
-        interrupts.stat = vblank_and_stat.1;
-        interrupts.timer = self.memory_bus.timer_control.tick(cycles);
+        interrupts.vblank = vblank_and_stat.0.into();
+        interrupts.stat = vblank_and_stat.1.into();
+        interrupts.timer = self.memory_bus.timer_control.tick(cycles).into();
 
         // Update framebuffer on vblank
-        if interrupts.vblank {
+        if interrupts.vblank.to_bool() {
             let mut f = self.framebuffer.lock().unwrap();
             *f = *self.memory_bus.ppu.get_current_framebuffer();
         }
@@ -185,8 +150,9 @@ impl Gbc {
         interrupts
     }
 
+    #[must_use]
     pub fn get_current_framebuffer(&self) -> [[Color; 160]; 144] {
-        self.memory_bus.ppu.get_current_framebuffer().clone()
+        *self.memory_bus.ppu.get_current_framebuffer()
     }
 
     pub fn dump_cpu_state(&self) {
@@ -205,10 +171,10 @@ impl Gbc {
         self.cpu.dump_state();
         println!("\tCycles run: {}", self.cycle_count);
         println!("\tBreakpoints: ");
-        if self.breakpoints.len() == 0 {
+        if self.breakpoints.is_empty() {
             println!("\t\tNone");
         } else {
-            for bp in self.breakpoints.iter() {
+            for bp in &self.breakpoints {
                 println!("\t\t{:04x} {} {}", bp.address, bp.access_type, bp.reason);
             }
         }
@@ -220,18 +186,12 @@ impl Gbc {
     }
 
     pub fn print_instructions(&self, address: Option<u16>, length: u16) {
-        let mut address = if let Some(address) = address {
-            address
-        } else {
-            self.cpu.get_program_counter()
-        };
+        let mut address = address.map_or_else(|| self.cpu.get_program_counter(), |address| address);
 
         for _ in 0..length {
-            let insn = self
-                .cpu
-                .get_instruction_at_address(&self.memory_bus, address);
+            let insn = Cpu::get_instruction_at_address(&self.memory_bus, address);
             println!("{}", insn);
-            address += insn.size() as u16;
+            address += u16::from(insn.size());
         }
     }
 
@@ -240,10 +200,12 @@ impl Gbc {
         println!("{}", insn);
     }
 
+    #[must_use]
     pub fn read_memory(&self, address: u16, length: u16) -> Vec<u8> {
         self.memory_bus.read_mem(address, length)
     }
 
+    #[must_use]
     pub fn get_cartridge(&self) -> &Cartridge {
         &self.memory_bus.cartridge
     }

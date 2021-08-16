@@ -250,11 +250,12 @@ pub enum Opcode {
 
 impl Opcode {
     fn print(&self, address: u16) -> String {
+        #[allow(clippy::match_same_arms)]
         match self {
             Opcode::Unknown { opcode } => format!("Unknown: {0:02x} {0:08b}", opcode),
-            Opcode::Nop => format!("nop"),
-            Opcode::Stop => format!("stop"),
-            Opcode::Halt => format!("halt"),
+            Opcode::Nop => "nop".to_string(),
+            Opcode::Stop => "stop".to_string(),
+            Opcode::Halt => "halt".to_string(),
             Opcode::Ld8 {
                 destination,
                 source,
@@ -268,18 +269,22 @@ impl Opcode {
                 condition,
                 destination,
             } => format!("jp {},{:#x}", condition, destination),
-            Opcode::Jr { offset } => format!("jr {:#x}", address as i32 + *offset as i32),
+            Opcode::Jr { offset } => format!("jr {:#x}", i32::from(address) + i32::from(*offset)),
             Opcode::JrCond { condition, offset } => {
-                format!("jr {},{:#x}", condition, address as i32 + *offset as i32)
+                format!(
+                    "jr {},{:#x}",
+                    condition,
+                    i32::from(address) + i32::from(*offset)
+                )
             }
             Opcode::Call { destination } => format!("call {:#x}", destination),
             Opcode::CallCond {
                 condition,
                 destination,
             } => format!("call {},{:#x}", condition, destination),
-            Opcode::Ret => format!("ret"),
+            Opcode::Ret => "ret".to_string(),
             Opcode::RetCond { condition } => format!("ret {}", condition),
-            Opcode::Reti => format!("reti"),
+            Opcode::Reti => "reti".to_string(),
             Opcode::Pop { register } => format!("pop {}", register),
             Opcode::Push { register } => format!("push {}", register),
             Opcode::Rst { vector } => format!("rst {:#x}", vector),
@@ -299,12 +304,12 @@ impl Opcode {
             Opcode::Xor { operand } => format!("xor {}", operand),
             Opcode::Or { operand } => format!("or {}", operand),
             Opcode::Cp { operand } => format!("cp {}", operand),
-            Opcode::Cpl => format!("cpl"),
-            Opcode::Daa => format!("daa"),
-            Opcode::Rlca => format!("rlca"),
-            Opcode::Rla => format!("rla"),
-            Opcode::Rrca => format!("rrca"),
-            Opcode::Rra => format!("rra"),
+            Opcode::Cpl => "cpl".to_string(),
+            Opcode::Daa => "daa".to_string(),
+            Opcode::Rlca => "rlca".to_string(),
+            Opcode::Rla => "rla".to_string(),
+            Opcode::Rrca => "rrca".to_string(),
+            Opcode::Rra => "rra".to_string(),
             Opcode::Rlc { operand: register } => format!("rlc {}", register),
             Opcode::Rl { operand: register } => format!("rl {}", register),
             Opcode::Rrc { operand: register } => format!("rrc {}", register),
@@ -313,14 +318,15 @@ impl Opcode {
             Opcode::Swap { operand: register } => format!("swap {}", register),
             Opcode::Sra { operand: register } => format!("sra {}", register),
             Opcode::Srl { operand: register } => format!("Srl {}", register),
-            Opcode::Scf => format!("scf"),
-            Opcode::Ccf => format!("ccf"),
-            Opcode::Di => format!("di"),
-            Opcode::Ei => format!("ei"),
+            Opcode::Scf => "scf".to_string(),
+            Opcode::Ccf => "ccf".to_string(),
+            Opcode::Di => "di".to_string(),
+            Opcode::Ei => "ei".to_string(),
         }
     }
 
     fn size(&self) -> u8 {
+        #[allow(clippy::match_same_arms)]
         match self {
             Opcode::Unknown { .. } => 1,
             Opcode::Nop => 1,
@@ -354,7 +360,7 @@ impl Opcode {
                     3
                 } else if let Operand::StackOffset(..) = source {
                     2
-                }else {
+                } else {
                     1
                 }
             }
@@ -394,7 +400,7 @@ impl Opcode {
                 } else {
                     1
                 }
-            },
+            }
             Opcode::Inc { .. } => 1,
             Opcode::Inc16 { .. } => 1,
             Opcode::Dec { .. } => 1,
@@ -471,7 +477,7 @@ impl Opcode {
 }
 
 fn make_u16(low: u8, high: u8) -> u16 {
-    (high as u16) << 8 | low as u16
+    u16::from(high) << 8 | u16::from(low)
 }
 
 fn make_i8(v: u8) -> i8 {
@@ -485,13 +491,16 @@ pub struct Instruction {
 }
 
 impl Instruction {
+    #[must_use]
     pub fn size(&self) -> u8 {
         self.op.size()
     }
 
+    #[must_use]
     pub fn new(address: u16, memory_bus: &MemoryBus) -> Self {
         let byte = memory_bus.read_u8(address);
 
+        #[allow(clippy::match_same_arms)]
         match byte {
             0x00 => Instruction {
                 address,
@@ -2133,6 +2142,7 @@ impl Instruction {
 
     fn make_cb_instruction(address: u16, memory_bus: &MemoryBus) -> Instruction {
         let op = memory_bus.read_u8(address.wrapping_add(1));
+        #[allow(clippy::match_same_arms)]
         match op {
             0x00 => Instruction {
                 address,
@@ -3873,7 +3883,7 @@ impl Display for Instruction {
             f,
             "0x{:04x} - {} (size = {})",
             self.address,
-            self.op.print(self.address + size as u16),
+            self.op.print(self.address + u16::from(size)),
             size
         )
     }

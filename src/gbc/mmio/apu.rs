@@ -45,7 +45,9 @@ pub struct Sound {
 }
 
 impl Sound {
+    #[must_use]
     pub fn read_u8(&self, offset: u16) -> u8 {
+        #![allow(clippy::match_same_arms)]
         match offset {
             0x0 => self.channel1.sweep_control,
             0x1 => self.channel1.sound_length_duty,
@@ -76,6 +78,7 @@ impl Sound {
     }
 
     pub fn write_u8(&mut self, offset: u16, byte: u8) {
+        #![allow(clippy::match_same_arms)]
         match offset {
             0x0 => self.channel1.sweep_control = byte,
             0x1 => self.channel1.sound_length_duty = byte,
@@ -105,6 +108,7 @@ impl Sound {
         }
     }
 
+    #[must_use]
     pub fn read_u8_from_waveform(&self, offset: u16) -> u8 {
         assert!(offset < 16);
         self.digital_channel.wave_ram[offset as usize]

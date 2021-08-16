@@ -45,7 +45,7 @@ fn tokenize_line(line: &str) -> Result<Vec<String>, TokenizerError> {
     if saw_quote {
         return Err(TokenizerError::UnmatchedQuote(quote_type));
     }
-    if cur_token != "" {
+    if !cur_token.is_empty() {
         tokens.push(cur_token);
     }
 
@@ -57,12 +57,15 @@ fn parse_u16_hex(s: &str) -> Result<u16, ParseIntError> {
     u16::from_str_radix(without_prefix, 16)
 }
 
+const LINE_LENGTH: u16 = 4;
+
 #[derive(Debug)]
 pub struct Debugger {
     gbc: Gbc,
 }
 
 impl Debugger {
+    #[must_use]
     pub fn new(gbc: Gbc) -> Self {
         Debugger { gbc }
     }
@@ -79,7 +82,7 @@ impl Debugger {
                     rl.add_history_entry(line.as_str());
                     let tokens = match tokenize_line(line.as_str()) {
                         Ok(tokens) => {
-                            if tokens.len() == 0 {
+                            if tokens.is_empty() {
                                 match rl.history().last() {
                                     Some(l) => match tokenize_line(l.as_str()) {
                                         Ok(tokens) => tokens,
@@ -145,7 +148,7 @@ impl Debugger {
                         }
                         "list" | "bl" | "lb" | "listbreak" => {
                             let breakpoints = self.gbc.list_breakpoints();
-                            if breakpoints.len() == 0 {
+                            if breakpoints.is_empty() {
                                 println!("No breakpoints");
                             } else {
                                 for (i, bp) in breakpoints.iter().enumerate() {
@@ -157,7 +160,7 @@ impl Debugger {
                             }
                         }
                         "bc" | "delete" | "del" | "clear" | "clearbreak" | "cb" => {
-                            for index_str in tokens[1..].iter().flat_map(|i| i.split(",")) {
+                            for index_str in tokens[1..].iter().flat_map(|i| i.split(',')) {
                                 match index_str.parse::<usize>() {
                                     Ok(index) => self.gbc.remove_breakpoint(index),
                                     Err(e) => println!("Invalid index {}: {}", index_str, e),
@@ -201,9 +204,8 @@ impl Debugger {
                             };
 
                             let bytes = self.gbc.read_memory(address, length);
-                            const LINE_LENGTH: usize = 4;
                             let mut cur_addr = address;
-                            for chunk in bytes.chunks(LINE_LENGTH) {
+                            for chunk in bytes.chunks(LINE_LENGTH as usize) {
                                 print!("{:04x}: ", cur_addr);
                                 for byte in chunk {
                                     print!("{:02x} ", byte);
@@ -263,8 +265,8 @@ impl Debugger {
                             );
                             println!(
                                 "\tRAM Size: {} ({} banks)",
-                                cart.ram_size,
-                                cart.ram_size / 8192
+                                cart.external_ram_size,
+                                cart.external_ram_size / 8192
                             );
                             println!("\tIs Japanese: {}", cart.is_japanese);
                             println!("\tROM Version: {}", cart.rom_version);

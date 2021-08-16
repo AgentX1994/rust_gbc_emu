@@ -1,7 +1,9 @@
 use std::{fs::File, io::Write};
 
+const CYCLES_PER_BYTE: u64 = 4_194_304 / 8192; // CPU speed (4194304 HZ) divided by internal clock (8192 HZ)
+
 #[derive(Debug)]
-pub struct SerialComms {
+pub struct Comms {
     pub io_register: u8,
     pub control: u8,
     pub io_register_on_control_byte_write: u8,
@@ -11,7 +13,8 @@ pub struct SerialComms {
     out_file: File,
 }
 
-impl SerialComms {
+impl Comms {
+    #[must_use]
     pub fn read_u8(&self, offset: u16) -> u8 {
         match offset {
             0 => self.io_register,
@@ -39,7 +42,6 @@ impl SerialComms {
             return false;
         }
 
-        const CYCLES_PER_BYTE: u64 = 4194304 / 8192; // CPU speed (4194304 HZ) divided by internal clock (8192 HZ)
         self.ticks += cycles;
         let mut interrupt_required = false;
         while self.ticks > CYCLES_PER_BYTE {
@@ -62,7 +64,7 @@ impl SerialComms {
                 self.out_file.flush().expect("Could not flush");
                 self.out_byte = 0;
                 self.bits_written = 0;
-                self.control = self.control & 0x7f;
+                self.control &= 0x7f;
 
                 interrupt_required = true;
             } else {
@@ -73,7 +75,7 @@ impl SerialComms {
     }
 }
 
-impl Default for SerialComms {
+impl Default for Comms {
     fn default() -> Self {
         Self {
             io_register: 0,

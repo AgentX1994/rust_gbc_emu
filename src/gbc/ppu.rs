@@ -11,6 +11,7 @@ pub enum ColorIndex {
 }
 
 impl ColorIndex {
+    #[must_use]
     pub fn new(color: u8) -> Self {
         match color {
             0 => Self::Color0,
@@ -34,6 +35,7 @@ pub struct Tile {
 }
 
 impl Tile {
+    #[must_use]
     fn get_color(&self, x: u8, y: u8) -> ColorIndex {
         assert!(x < 8);
         assert!(y < 8);
@@ -47,13 +49,14 @@ impl Tile {
         ColorIndex::new((bit2 << 1) | bit1)
     }
 
+    #[must_use]
     pub fn deinterleave(&self) -> [ColorIndex; 64] {
         let mut colors = [ColorIndex::default(); 64];
         for i in (0..16).step_by(2) {
             let mut byte0 = self.lines[i];
             let mut byte1 = self.lines[i + 1];
 
-            colors[i * 8 + 0] = ColorIndex::new(((byte1 & 1) << 1) | (byte0 & 1));
+            colors[i * 8] = ColorIndex::new(((byte1 & 1) << 1) | (byte0 & 1));
             byte0 >>= 1;
             byte1 >>= 1;
 
@@ -97,6 +100,7 @@ impl TileAddressingMethod {
     fn set_offset(&mut self, offset: u8) {
         match self {
             TileAddressingMethod::From8000(ref mut o) => *o = offset,
+            #[allow(clippy::cast_possible_wrap)]
             TileAddressingMethod::From9000(ref mut i) => *i = offset as i8,
         }
     }
@@ -104,10 +108,10 @@ impl TileAddressingMethod {
 
 impl From<bool> for TileAddressingMethod {
     fn from(v: bool) -> Self {
-        if !v {
-            Self::From9000(0)
-        } else {
+        if v {
             Self::From8000(0)
+        } else {
+            Self::From9000(0)
         }
     }
 }
@@ -169,7 +173,7 @@ impl VideoRam {
     fn write(&mut self, offset: u16, byte: u8) {
         match offset {
             0..=0x07ff => {
-                self.tile_block_0[(offset / 16) as usize].lines[(offset % 16) as usize] = byte
+                self.tile_block_0[(offset / 16) as usize].lines[(offset % 16) as usize] = byte;
             }
             0x0800..=0x0fff => {
                 let offset = offset - 0x0800;
@@ -191,6 +195,7 @@ impl VideoRam {
         }
     }
 
+    #[must_use]
     pub fn read_tile(&self, addressing_method: TileAddressingMethod) -> Tile {
         match addressing_method {
             TileAddressingMethod::From8000(offset) => {
@@ -202,8 +207,10 @@ impl VideoRam {
             }
             TileAddressingMethod::From9000(offset) => {
                 if offset < 0 {
-                    self.tile_block_1[(128i16 + offset as i16) as usize]
+                    #[allow(clippy::cast_sign_loss)]
+                    self.tile_block_1[(128_i16 + i16::from(offset)) as usize]
                 } else {
+                    #[allow(clippy::cast_sign_loss)]
                     self.tile_block_2[offset as usize]
                 }
             }
@@ -298,11 +305,11 @@ impl From<u8> for SpriteAttributes {
 
 impl From<SpriteAttributes> for u8 {
     fn from(attributes: SpriteAttributes) -> Self {
-        ((attributes.behind_background as u8) << 7u8)
-            | ((attributes.flip_y as u8) << 6u8)
-            | ((attributes.flip_x as u8) << 5u8)
-            | (u8::from(attributes.gb_palette_number) << 4u8)
-            | (u8::from(attributes.cgb_vram_bank) << 3u8)
+        ((attributes.behind_background as u8) << 7_u8)
+            | ((attributes.flip_y as u8) << 6_u8)
+            | ((attributes.flip_x as u8) << 5_u8)
+            | (u8::from(attributes.gb_palette_number) << 4_u8)
+            | (u8::from(attributes.cgb_vram_bank) << 3_u8)
             | attributes.cgb_palette_number
     }
 }
@@ -380,12 +387,13 @@ impl Default for PictureProcessingUnit {
             object_attribute_memory: ObjectAttributeMemory::default(),
             framebuffer1: [[Color::White; 160]; 144],
             framebuffer2: [[Color::White; 160]; 144],
-            framebuffer_selector: false
+            framebuffer_selector: false,
         }
     }
 }
 
 impl PictureProcessingUnit {
+    #[must_use]
     pub fn read_video_ram(&self, offset: u16) -> u8 {
         if self.in_use_by_lcd {
             return 0xff;
@@ -399,6 +407,7 @@ impl PictureProcessingUnit {
         }
     }
 
+    #[must_use]
     pub fn read_object_attribute_memory(&self, offset: u16) -> u8 {
         if self.in_use_by_lcd {
             return 0xff;
@@ -448,6 +457,7 @@ impl PictureProcessingUnit {
             let y = lcd.get_ly();
 
             if x_u16 < 160 && y < 144 {
+                #[allow(clippy::cast_possible_truncation)]
                 let x = x_u16 as u8;
                 let addressing_mode = lcd.get_addressing_mode();
                 let bg_window_priority = lcd.get_background_window_priority();
@@ -461,8 +471,12 @@ impl PictureProcessingUnit {
 
                 // If this is not true, the background and window should display as white
                 if bg_window_priority {
-                    let bg_color =
-                        self.get_color_at_pixel_using_tilemap(bg_x, bg_y, bg_tile_map, addressing_mode);
+                    let bg_color = self.get_color_at_pixel_using_tilemap(
+                        bg_x,
+                        bg_y,
+                        bg_tile_map,
+                        addressing_mode,
+                    );
                     let color = palette.get_color(&bg_color);
                     self.write_to_framebuffer(x as usize, y as usize, color);
                     //framebuffer[y as usize][x as usize] = Self::color_to_u32(&color);
@@ -480,8 +494,8 @@ impl PictureProcessingUnit {
             if interrupts.0 {
                 self.framebuffer_selector ^= true;
             }
-            vblank_interrupt = vblank_interrupt | interrupts.0;
-            stat_interrupt = stat_interrupt | interrupts.1;
+            vblank_interrupt |= interrupts.0;
+            stat_interrupt |= interrupts.1;
         }
 
         (vblank_interrupt, stat_interrupt)
@@ -493,18 +507,19 @@ impl PictureProcessingUnit {
     }
 
     pub fn get_current_framebuffer_mut(&mut self) -> &mut [[Color; 160]; 144] {
-        if !self.framebuffer_selector {
-            &mut self.framebuffer1
-        } else {
+        if self.framebuffer_selector {
             &mut self.framebuffer2
+        } else {
+            &mut self.framebuffer1
         }
     }
 
+    #[must_use]
     pub fn get_current_framebuffer(&self) -> &[[Color; 160]; 144] {
-        if !self.framebuffer_selector {
-            &self.framebuffer1
-        } else {
+        if self.framebuffer_selector {
             &self.framebuffer2
+        } else {
+            &self.framebuffer1
         }
     }
 }

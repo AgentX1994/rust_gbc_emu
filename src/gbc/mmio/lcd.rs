@@ -1,6 +1,7 @@
 use std::convert::From;
 
 use crate::gbc::ppu::{ColorIndex, TileAddressingMethod};
+use crate::gbc::utils::Flag;
 
 #[derive(Copy, Clone, Debug)]
 pub enum Color {
@@ -29,7 +30,7 @@ impl From<u8> for Color {
 }
 
 impl Color {
-    fn to_u8(&self) -> u8 {
+    fn to_u8(self) -> u8 {
         match self {
             Color::White => 0,
             Color::LightGray => 1,
@@ -58,13 +59,14 @@ impl From<u8> for Palette {
 }
 
 impl Palette {
-    fn to_u8(&self) -> u8 {
+    fn to_u8(self) -> u8 {
         (self.colors[3].to_u8() << 6)
             | (self.colors[2].to_u8() << 4)
             | (self.colors[1].to_u8() << 2)
             | self.colors[0].to_u8()
     }
 
+    #[must_use]
     pub fn get_color(&self, index: &ColorIndex) -> Color {
         match index {
             ColorIndex::Color0 => self.colors[0],
@@ -83,10 +85,10 @@ pub enum TileMap {
 
 impl From<bool> for TileMap {
     fn from(v: bool) -> Self {
-        if !v {
-            Self::From9800
-        } else {
+        if v {
             Self::From9C00
+        } else {
+            Self::From9800
         }
     }
 }
@@ -126,35 +128,35 @@ impl From<SpriteSize> for bool {
 }
 
 #[derive(Copy, Clone, Debug)]
-struct LcdControl {
-    enable: bool,
+struct Control {
+    enable: Flag,
     window_tile_map: TileMap,
-    window_enable: bool,
+    window_enable: Flag,
     tile_addressing_mode: TileAddressingMethod,
     bg_tile_map: TileMap,
     sprite_size: SpriteSize,
-    sprite_enable: bool,
-    bg_window_enable_or_priority: bool,
+    sprite_enable: Flag,
+    bg_window_enable_or_priority: Flag,
 }
 
-impl From<u8> for LcdControl {
+impl From<u8> for Control {
     fn from(v: u8) -> Self {
         Self {
-            enable: (v >> 7) == 1,
+            enable: ((v >> 7) == 1).into(),
             window_tile_map: (((v >> 6) & 1) == 1).into(),
-            window_enable: ((v >> 5) & 1) == 1,
+            window_enable: (((v >> 5) & 1) == 1).into(),
             tile_addressing_mode: (((v >> 4) & 1) == 1).into(),
             bg_tile_map: (((v >> 3) & 1) == 1).into(),
             sprite_size: (((v >> 2) & 1) == 1).into(),
-            sprite_enable: ((v >> 1) & 1) == 1,
-            bg_window_enable_or_priority: (v & 1) == 1,
+            sprite_enable: (((v >> 1) & 1) == 1).into(),
+            bg_window_enable_or_priority: ((v & 1) == 1).into(),
         }
     }
 }
 
-impl From<LcdControl> for u8 {
-    fn from(lcd: LcdControl) -> Self {
-        let mut x = 0u8;
+impl From<Control> for u8 {
+    fn from(lcd: Control) -> Self {
+        let mut x = 0_u8;
         x |= lcd.bg_window_enable_or_priority as u8;
         x <<= 1;
         x |= lcd.sprite_enable as u8;
@@ -231,31 +233,31 @@ impl From<LcdStatusMode> for u8 {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub struct LcdStatus {
-    interrupt_on_lyc: bool,
-    interrupt_on_oam: bool,
-    interrupt_on_vblank: bool,
-    interrupt_on_hblank: bool,
+struct Status {
+    interrupt_on_lyc: Flag,
+    interrupt_on_oam: Flag,
+    interrupt_on_vblank: Flag,
+    interrupt_on_hblank: Flag,
     lyc_compare_type: LycCompareType,
     mode: LcdStatusMode,
 }
 
-impl From<u8> for LcdStatus {
+impl From<u8> for Status {
     fn from(v: u8) -> Self {
         Self {
-            interrupt_on_lyc: ((v >> 6) & 1) == 1,
-            interrupt_on_oam: ((v >> 5) & 1) == 1,
-            interrupt_on_vblank: ((v >> 4) & 1) == 1,
-            interrupt_on_hblank: ((v >> 3) & 1) == 1,
+            interrupt_on_lyc: (((v >> 6) & 1) == 1).into(),
+            interrupt_on_oam: (((v >> 5) & 1) == 1).into(),
+            interrupt_on_vblank: (((v >> 4) & 1) == 1).into(),
+            interrupt_on_hblank: (((v >> 3) & 1) == 1).into(),
             lyc_compare_type: (((v >> 2) & 1) == 1).into(),
             mode: (v & 0x3).into(),
         }
     }
 }
 
-impl From<LcdStatus> for u8 {
-    fn from(status: LcdStatus) -> Self {
-        let mut x = 0u8;
+impl From<Status> for u8 {
+    fn from(status: Status) -> Self {
+        let mut x = 0_u8;
         x |= status.interrupt_on_lyc as u8;
         x <<= 1;
         x |= status.interrupt_on_oam as u8;
@@ -273,8 +275,8 @@ impl From<LcdStatus> for u8 {
 
 #[derive(Debug)]
 pub struct Lcd {
-    control: LcdControl,
-    status: LcdStatus,
+    control: Control,
+    status: Status,
     scroll_y: u8,
     scroll_x: u8,
     ly: u8,
@@ -311,6 +313,7 @@ impl Default for Lcd {
 }
 
 impl Lcd {
+    #[must_use]
     pub fn read_u8(&self, offset: u16) -> u8 {
         match offset {
             0x0 => self.control.into(),
@@ -347,6 +350,7 @@ impl Lcd {
         }
     }
 
+    #[must_use]
     pub fn tick(&mut self) -> (bool, bool) {
         let mut vblank_interrupt = false;
         let mut stat_interrupt = false;
@@ -361,14 +365,14 @@ impl Lcd {
             self.ly = 0;
         }
 
-        if self.status.interrupt_on_hblank && self.lx == 160 {
+        if self.status.interrupt_on_hblank.to_bool() && self.lx == 160 {
             stat_interrupt = true;
         }
-        if self.status.interrupt_on_vblank && self.ly == 144 {
+        if self.status.interrupt_on_vblank.to_bool() && self.ly == 144 {
             stat_interrupt = true;
         }
         // TODO OAM stat interrupt
-        if self.status.interrupt_on_lyc && self.ly == self.ly_compare {
+        if self.status.interrupt_on_lyc.to_bool() && self.ly == self.ly_compare {
             stat_interrupt = true;
         }
 
@@ -380,42 +384,52 @@ impl Lcd {
         (vblank_interrupt, should_stat_interrupt)
     }
 
+    #[must_use]
     pub fn get_ly(&self) -> u8 {
         self.ly
     }
 
+    #[must_use]
     pub fn get_lx(&self) -> u16 {
         self.lx
     }
 
+    #[must_use]
     pub fn get_scroll_offsets(&self) -> (u8, u8) {
         (self.scroll_x, self.scroll_y)
     }
 
+    #[must_use]
     pub fn get_background_palette(&self) -> Palette {
         self.background_palette
     }
 
+    #[must_use]
     pub fn get_addressing_mode(&self) -> TileAddressingMethod {
         self.control.tile_addressing_mode
     }
 
+    #[must_use]
     pub fn get_background_tile_map(&self) -> TileMap {
         self.control.bg_tile_map
     }
 
+    #[must_use]
     pub fn get_background_window_priority(&self) -> bool {
-        self.control.bg_window_enable_or_priority
+        self.control.bg_window_enable_or_priority.to_bool()
     }
 
+    #[must_use]
     pub fn get_object_palettes(&self) -> (Palette, Palette) {
         (self.object_palette_0, self.object_pallete_1)
     }
 
+    #[must_use]
     pub fn get_window_coords(&self) -> (u8, u8) {
         (self.window_x, self.window_y)
     }
 
+    #[must_use]
     pub fn get_window_tile_map(&self) -> TileMap {
         self.control.window_tile_map
     }

@@ -1,5 +1,5 @@
 use super::cartridge::Cartridge;
-use super::mmio::{apu::Sound, joypad::Joypad, lcd::Lcd, serial::SerialComms, timer::Timer};
+use super::mmio::{apu::Sound, joypad::Joypad, lcd::Lcd, serial::Comms, timer::Timer};
 use super::ppu::PictureProcessingUnit;
 
 enum MemoryRegion {
@@ -24,6 +24,7 @@ enum MemoryRegion {
 
 impl From<u16> for MemoryRegion {
     fn from(address: u16) -> Self {
+        #![allow(clippy::match_same_arms)]
         match address {
             0x0000..=0x3fff => MemoryRegion::CartridgeBank0(address),
             0x4000..=0x7fff => MemoryRegion::CartridgeBankSelectable(address - 0x4000),
@@ -54,7 +55,7 @@ pub struct MemoryBus {
     pub ram: [u8; 8192],
     pub ppu: PictureProcessingUnit,
     pub joypad: Joypad,
-    pub serial: SerialComms,
+    pub serial: Comms,
     pub timer_control: Timer,
     pub sound: Sound,
     pub lcd: Lcd,
@@ -69,44 +70,29 @@ pub struct MemoryBus {
 }
 
 impl MemoryBus {
-    pub fn new(
-        cartridge: Cartridge,
-        ram: [u8; 8192],
-        ppu: PictureProcessingUnit,
-        joypad: Joypad,
-        serial: SerialComms,
-        timer_control: Timer,
-        sound: Sound,
-        lcd: Lcd,
-        vram_select: u8,
-        disable_boot_rom: bool,
-        vram_dma: [u8; 4],
-        color_palettes: [u8; 2],
-        wram_bank_select: u8,
-        interrupt_flags: u8,
-        high_ram: [u8; 127],
-        interrupt_enable: u8,
-    ) -> Self {
+    #[must_use]
+    pub fn new(cartridge: Cartridge) -> Self {
         MemoryBus {
             cartridge,
-            ram,
-            ppu,
-            joypad,
-            serial,
-            timer_control,
-            sound,
-            lcd,
-            vram_select,
-            disable_boot_rom,
-            vram_dma,
-            color_palettes,
-            wram_bank_select,
-            interrupt_flags,
-            high_ram,
-            interrupt_enable: interrupt_enable,
+            ram: [0; 8192],
+            ppu: PictureProcessingUnit::default(),
+            joypad: Joypad::default(),
+            serial: Comms::default(),
+            timer_control: Timer::default(),
+            sound: Sound::default(),
+            lcd: Lcd::default(),
+            vram_select: 0,
+            disable_boot_rom: false,
+            vram_dma: [0; 4],
+            color_palettes: [0; 2],
+            wram_bank_select: 0,
+            interrupt_flags: 0,
+            high_ram: [0; 127],
+            interrupt_enable: 0,
         }
     }
 
+    #[must_use]
     pub fn read_u8(&self, address: u16) -> u8 {
         let region = MemoryRegion::from(address);
         match region {
@@ -122,6 +108,7 @@ impl MemoryBus {
             }
             MemoryRegion::Unused => {
                 // Use Color Game Boy Revision E behavior I guess?
+                #[allow(clippy::cast_possible_truncation)]
                 let second_nibble = ((address >> 4) & 0xf) as u8;
                 (second_nibble << 4) | second_nibble
             }
@@ -138,12 +125,14 @@ impl MemoryBus {
         }
     }
 
+    #[must_use]
     pub fn read_u16(&mut self, address: u16) -> u16 {
         let byte1 = self.read_u8(address);
         let byte2 = self.read_u8(address.wrapping_add(1));
-        ((byte2 as u16) << 8) | byte1 as u16
+        (u16::from(byte2) << 8) | u16::from(byte1)
     }
 
+    #[must_use]
     pub fn read_mem(&self, address: u16, length: u16) -> Vec<u8> {
         let mut vec = Vec::with_capacity(length as usize);
 
@@ -156,17 +145,18 @@ impl MemoryBus {
     }
 
     pub fn write_u8(&mut self, address: u16, byte: u8) {
+        #![allow(clippy::match_same_arms)]
         let region = MemoryRegion::from(address);
         match region {
             MemoryRegion::CartridgeBank0(offset) => self.cartridge.write_rom_bank_0(offset, byte),
             MemoryRegion::CartridgeBankSelectable(offset) => {
-                self.cartridge.write_rom_selected_bank(offset, byte)
+                self.cartridge.write_rom_selected_bank(offset, byte);
             }
             MemoryRegion::VideoRam(offset) => self.ppu.write_video_ram(offset, byte),
             MemoryRegion::ExternalRam(offset) => self.cartridge.write_to_external_ram(offset, byte),
             MemoryRegion::WorkRam(offset) => self.ram[offset as usize] = byte,
             MemoryRegion::ObjectAttributeMemory(offset) => {
-                self.ppu.write_object_attribute_memory(offset, byte)
+                self.ppu.write_object_attribute_memory(offset, byte);
             }
             MemoryRegion::Unused => (),
             MemoryRegion::Joypad => self.joypad.write_u8(byte),
@@ -178,10 +168,7 @@ impl MemoryBus {
             MemoryRegion::Lcd(offset) => self.lcd.write_u8(offset, byte),
             MemoryRegion::Key1Flag => (),
             MemoryRegion::HighRam(offset) => self.high_ram[offset as usize] = byte,
-            MemoryRegion::InterruptEnable => {
-                // println!("Setting IE to {}", byte);
-                self.interrupt_enable = byte
-            }
+            MemoryRegion::InterruptEnable => self.interrupt_enable = byte,
         }
     }
 
@@ -191,6 +178,7 @@ impl MemoryBus {
 
     pub fn write_mem(&mut self, address: u16, bytes: &[u8]) {
         for (i, byte) in bytes.iter().enumerate() {
+            #[allow(clippy::cast_possible_truncation)]
             self.write_u8(address.wrapping_add(i as u16), *byte);
         }
     }

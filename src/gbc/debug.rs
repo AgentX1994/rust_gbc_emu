@@ -54,25 +54,19 @@ impl Display for BreakReason {
 }
 
 impl AccessType {
+    #[must_use]
     pub fn on_read(&self) -> bool {
-        match self {
-            Self::Read | Self::ReadWrite | Self::ReadExecute | Self::ReadWriteExecute => true,
-            _ => false,
-        }
+        matches!(self, Self::Read | Self::ReadWrite | Self::ReadExecute | Self::ReadWriteExecute)
     }
 
+    #[must_use]
     pub fn on_write(&self) -> bool {
-        match self {
-            Self::Write | Self::ReadWrite | Self::WriteExecute | Self::ReadWriteExecute => true,
-            _ => false,
-        }
+        matches!(self, Self::Write | Self::ReadWrite | Self::WriteExecute | Self::ReadWriteExecute)
     }
 
+    #[must_use]
     pub fn on_execute(&self) -> bool {
-        match self {
-            Self::Execute | Self::ReadExecute | Self::WriteExecute | Self::ReadWriteExecute => true,
-            _ => false,
-        }
+        matches!(self, Self::Execute | Self::ReadExecute | Self::WriteExecute | Self::ReadWriteExecute)
     }
 }
 
@@ -85,6 +79,7 @@ pub struct Breakpoint {
 }
 
 impl Breakpoint {
+    #[must_use]
     pub fn new(address: u16, access_type: AccessType, length: u16, reason: BreakReason) -> Self {
         Breakpoint {
             address,
@@ -94,6 +89,7 @@ impl Breakpoint {
         }
     }
 
+    #[must_use]
     pub fn matches_address(&self, address: u16) -> bool {
         self.address <= address && address < (self.address + self.length)
     }

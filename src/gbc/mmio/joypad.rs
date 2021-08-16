@@ -18,7 +18,11 @@ impl Joypad {
         self.selected = byte;
     }
 
+    #[must_use]
     pub fn read_u8(&self) -> u8 {
+        // I'm pretty sure this clippy lint is completely
+        // wrong here
+        #[allow(clippy::if_not_else)]
         if self.selected & (1 << 4) != 0 {
             0xd | self.selected | (self.input & 0xf)
         } else if self.selected & (1 << 5) != 0 {

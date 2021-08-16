@@ -16,11 +16,13 @@ union RegisterInner {
     inner: Inner,
 }
 
+#[allow(clippy::module_name_repetitions)]
 pub struct RegisterStorage {
     value: RegisterInner,
 }
 
 impl RegisterStorage {
+    #[must_use]
     pub fn new(value: u16) -> Self {
         RegisterStorage {
             value: RegisterInner { all: value },
@@ -39,26 +41,32 @@ impl RegisterStorage {
         self.value.all = value;
     }
 
+    #[must_use]
     pub fn get_low(&self) -> u8 {
         unsafe { self.value.inner.low }
     }
 
+    #[must_use]
     pub fn get_high(&self) -> u8 {
         unsafe { self.value.inner.high }
     }
 
+    #[must_use]
     pub fn get_u16(&self) -> u16 {
         unsafe { self.value.all }
     }
 
+    #[must_use]
     pub fn get_low_mut(&mut self) -> &mut u8 {
         unsafe { &mut self.value.inner.low }
     }
 
+    #[must_use]
     pub fn get_high_mut(&mut self) -> &mut u8 {
         unsafe { &mut self.value.inner.high }
     }
 
+    #[must_use]
     pub fn get_u16_mut(&mut self) -> &mut u16 {
         unsafe { &mut self.value.all }
     }

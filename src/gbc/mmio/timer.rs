@@ -1,6 +1,6 @@
 // TODO support other clock speeds
 const DIV_TICK_RATE: u64 = 16384;
-const CPU_FREQ: u64 = 4194304;
+const CPU_FREQ: u64 = 4_194_304;
 const CYCLES_PER_DIV_TICK: u64 = CPU_FREQ / DIV_TICK_RATE;
 
 #[derive(Debug)]
@@ -27,6 +27,7 @@ impl Default for Timer {
 }
 
 impl Timer {
+    #[must_use]
     pub fn read_u8(&self, offset: u16) -> u8 {
         match offset {
             0 => self.divider,
@@ -56,11 +57,13 @@ impl Timer {
         }
 
         // check if TIMA should be ticked
-        if self.control & 0x4 != 0 {
+        if self.control & 0x4 == 0 {
+            false
+        } else {
             self.tma_cycles_counter += cycles;
             let cycles_per_tma_tick = match self.control & 0x3 {
                 0 => CPU_FREQ / 4096,
-                1 => CPU_FREQ / 262144,
+                1 => CPU_FREQ / 262_144,
                 2 => CPU_FREQ / 65536,
                 3 => CPU_FREQ / 16384,
                 _ => unreachable!(),
@@ -68,21 +71,17 @@ impl Timer {
             if self.tma_cycles_counter > cycles_per_tma_tick {
                 self.tma_cycles_counter -= cycles_per_tma_tick;
                 let res = self.timer_counter.checked_add(1);
-                match res {
-                    Some(v) => {
-                        self.timer_counter = v;
-                        false
-                    }
-                    None => {
-                        self.timer_counter = self.timer_reset_value;
-                        true
-                    }
+                #[allow(clippy::option_if_let_else)]
+                if let Some(v) = res {
+                    self.timer_counter = v;
+                    false
+                } else {
+                    self.timer_counter = self.timer_reset_value;
+                    true
                 }
             } else {
                 false
             }
-        } else {
-            false
         }
     }
 }
