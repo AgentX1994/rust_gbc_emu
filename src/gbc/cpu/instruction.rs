@@ -497,7 +497,7 @@ impl Instruction {
     }
 
     #[must_use]
-    pub fn new(address: u16, memory_bus: &MemoryBus) -> Self {
+    pub fn new(address: u16, memory_bus: &mut MemoryBus) -> Self {
         let byte = memory_bus.read_u8(address);
 
         #[allow(clippy::match_same_arms)]
@@ -2140,7 +2140,7 @@ impl Instruction {
         }
     }
 
-    fn make_cb_instruction(address: u16, memory_bus: &MemoryBus) -> Instruction {
+    fn make_cb_instruction(address: u16, memory_bus: &mut MemoryBus) -> Instruction {
         let op = memory_bus.read_u8(address.wrapping_add(1));
         #[allow(clippy::match_same_arms)]
         match op {

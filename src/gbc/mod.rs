@@ -28,7 +28,7 @@ pub struct Gbc {
     cpu: Cpu,
     cycle_count: u64,
     breakpoints: Vec<Breakpoint>,
-    break_reason: Option<BreakReason>,
+    break_reason: Option<Breakpoint>,
     memory_bus: MemoryBus,
 }
 
@@ -67,7 +67,12 @@ impl Gbc {
         reason: BreakReason,
     ) {
         let bp = Breakpoint::new(address, access_type, length, reason);
-        self.breakpoints.push(bp);
+        if access_type.on_execute() {
+            self.breakpoints.push(bp);
+        }
+        if access_type.on_read() || access_type.on_write() {
+            self.memory_bus.add_breakpoint(bp);
+        }
     }
 
     #[must_use]
@@ -83,6 +88,11 @@ impl Gbc {
         }
     }
 
+    #[must_use]
+    pub fn get_last_breakpoint(&self) -> Option<Breakpoint> {
+        self.break_reason
+    }
+
     fn check_execute_breakpoints(&mut self) {
         let pc = self.cpu.get_program_counter();
         for bp in &self.breakpoints {
@@ -94,21 +104,39 @@ impl Gbc {
                 continue;
             }
 
-            self.running.store(false, Ordering::Relaxed);
-            self.break_reason = Some(bp.reason);
+            self.break_reason = Some(*bp);
             return;
         }
     }
 
-    pub fn run(&mut self) -> u64 {
+    fn check_breakpoints(&mut self) {
+        self.check_execute_breakpoints();
+        if self.break_reason.is_none() {
+            self.break_reason = self.memory_bus.get_break_reason();
+        }
+        if self.break_reason.is_some() {
+            self.running.store(false, Ordering::Relaxed);
+        }
+    }
+
+    pub fn run(&mut self) -> (u64, bool) {
+        self.break_reason = None;
         self.running.store(true, Ordering::Relaxed);
         let mut cycles_in_this_run = 0;
+        let mut encountered_problem = false;
         let mut start = Instant::now();
         while self.running.load(Ordering::Relaxed) {
-            let cycles = self.single_step();
+            let cycles = match self.single_step() {
+                Some(cycles) => cycles,
+                None => {
+                    encountered_problem = true;
+                    self.running.store(false, Ordering::Relaxed);
+                    break;
+                }
+            };
             self.cycle_count += cycles;
             cycles_in_this_run += cycles;
-            self.check_execute_breakpoints();
+            self.check_breakpoints();
             let desired_iteration_time =
                 Duration::from_nanos(cycles * (1_000_000_000_u64 / self.clock_speed));
             let next_cycle_time = start + desired_iteration_time;
@@ -117,16 +145,19 @@ impl Gbc {
             }
             start = Instant::now();
         }
-        cycles_in_this_run
+        (cycles_in_this_run, encountered_problem)
     }
 
-    pub fn single_step(&mut self) -> u64 {
-        let cycles = self.cpu.single_step(&mut self.memory_bus);
-
-        let interrupts = self.tick_hardware(cycles);
-        self.cpu
-            .request_interrupts(&mut self.memory_bus, &interrupts);
-        cycles
+    pub fn single_step(&mut self) -> Option<u64> {
+        match self.cpu.single_step(&mut self.memory_bus) {
+            Some(cycles) => {
+                let interrupts = self.tick_hardware(cycles);
+                self.cpu
+                    .request_interrupts(&mut self.memory_bus, &interrupts);
+                Some(cycles)
+            }
+            None => None,
+        }
     }
 
     pub fn tick_hardware(&mut self, cycles: u64) -> InterruptRequest {
@@ -140,6 +171,8 @@ impl Gbc {
         interrupts.vblank = vblank_and_stat.0.into();
         interrupts.stat = vblank_and_stat.1.into();
         interrupts.timer = self.memory_bus.timer_control.tick(cycles).into();
+
+        self.memory_bus.run_dma(cycles);
 
         // Update framebuffer on vblank
         if interrupts.vblank.to_bool() {
@@ -183,30 +216,39 @@ impl Gbc {
             Some(ref reason) => println!("{}", reason),
             None => println!("None"),
         }
+        println!("{:#?}", self.memory_bus);
     }
 
-    pub fn print_instructions(&self, address: Option<u16>, length: u16) {
+    pub fn print_instructions(&mut self, address: Option<u16>, length: u16) {
         let mut address = address.map_or_else(|| self.cpu.get_program_counter(), |address| address);
 
         for _ in 0..length {
-            let insn = Cpu::get_instruction_at_address(&self.memory_bus, address);
+            let insn = Cpu::get_instruction_at_address(&mut self.memory_bus, address);
             println!("{}", insn);
             address += u16::from(insn.size());
         }
     }
 
-    pub fn print_next_instruction(&self) {
-        let insn = self.cpu.get_next_instruction(&self.memory_bus);
+    pub fn print_next_instruction(&mut self) {
+        let insn = self.cpu.get_next_instruction(&mut self.memory_bus);
         println!("{}", insn);
     }
 
     #[must_use]
-    pub fn read_memory(&self, address: u16, length: u16) -> Vec<u8> {
+    pub fn read_memory(&mut self, address: u16, length: u16) -> Vec<u8> {
         self.memory_bus.read_mem(address, length)
     }
 
     #[must_use]
     pub fn get_cartridge(&self) -> &Cartridge {
         &self.memory_bus.cartridge
+    }
+
+    #[must_use]
+    pub fn reset(mut self) -> Self {
+        self.cycle_count = 0;
+        self.cpu.reset();
+        self.memory_bus = self.memory_bus.reset();
+        self
     }
 }

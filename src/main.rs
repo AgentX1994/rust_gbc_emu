@@ -13,7 +13,7 @@ use rust_gbc_emu::{
 };
 
 fn run_debugger(gbc: Gbc) {
-    let mut dbg = Debugger::new(gbc);
+    let dbg = Debugger::new(gbc);
     dbg.run();
 }
 
@@ -169,7 +169,10 @@ fn main() {
                 .unwrap();
         } else {
             let start = Instant::now();
-            let cycles = gbc.run();
+            let (cycles, encountered_problem) = gbc.run();
+            if encountered_problem {
+                println!("Encountered an unknown instruction, halting!");
+            }
             let runtime = Instant::now() - start;
             let cpu_speed = gbc.get_clock_speed();
             let actual_clock_speed = cycles as f64 / runtime.as_secs_f64();

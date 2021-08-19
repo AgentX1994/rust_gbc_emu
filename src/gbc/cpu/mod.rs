@@ -74,6 +74,14 @@ impl Cpu {
         }
     }
 
+    pub fn reset(&mut self) {
+        let show_instructions = self.show_instructions;
+        *self = Self {
+            show_instructions,
+            ..Self::default()
+        };
+    }
+
     pub fn interrupt(&mut self, memory_bus: &mut MemoryBus, interrupt_number: u8) {
         assert!(interrupt_number < 5);
         let interrupts_enabled = memory_bus.read_u8(INTERRUPT_ENABLE_REGISTER_ADDRESS);
@@ -121,23 +129,23 @@ impl Cpu {
     }
 
     #[must_use]
-    pub fn get_instruction_at_address(memory_bus: &MemoryBus, address: u16) -> Instruction {
+    pub fn get_instruction_at_address(memory_bus: &mut MemoryBus, address: u16) -> Instruction {
         Instruction::new(address, memory_bus)
     }
 
     #[must_use]
-    pub fn get_next_instruction(&self, memory_bus: &MemoryBus) -> Instruction {
+    pub fn get_next_instruction(&self, memory_bus: &mut MemoryBus) -> Instruction {
         Self::get_instruction_at_address(memory_bus, self.pc)
     }
 
-    pub fn single_step(&mut self, memory_bus: &mut MemoryBus) -> u64 {
+    pub fn single_step(&mut self, memory_bus: &mut MemoryBus) -> Option<u64> {
         if self.state != State::Running {
-            return 1;
+            return Some(1);
         }
 
         if self.should_service_interrupt(memory_bus) {
             self.service_interrupt(memory_bus);
-            return 5;
+            return Some(5);
         }
         let insn = self.get_next_instruction(memory_bus);
         if self.show_instructions {
@@ -150,19 +158,23 @@ impl Cpu {
     #[allow(clippy::cast_possible_wrap)]
     #[allow(clippy::cast_possible_truncation)]
     #[allow(clippy::cast_sign_loss)]
-    fn execute_instruction(&mut self, memory_bus: &mut MemoryBus, insn: Instruction) -> u64 {
+    fn execute_instruction(&mut self, memory_bus: &mut MemoryBus, insn: Instruction) -> Option<u64> {
         self.pc += u16::from(insn.size());
 
         match insn.op {
-            Opcode::Unknown { opcode: _ } => panic!("Unknown instruction! {}", insn),
-            Opcode::Nop => 4,
+            Opcode::Unknown { opcode: _ } => {
+                println!("Unknown instruction! {}", insn);
+                self.dump_state();
+                None
+            },
+            Opcode::Nop => Some(4),
             Opcode::Stop => {
                 self.state = State::Stopped;
-                4
+                Some(4)
             }
             Opcode::Halt => {
                 self.state = State::Halted;
-                4
+                Some(4)
             }
             Opcode::Ld8 {
                 destination,
@@ -172,17 +184,17 @@ impl Cpu {
                     Operand::Register(r_src) => {
                         let v = self.get_r8(&r_src);
                         self.set_r8(&r_dest, v);
-                        4
+                        Some(4)
                     }
                     Operand::U8(v) => {
                         self.set_r8(&r_dest, v);
-                        8
+                        Some(8)
                     }
                     Operand::Deref(d) => match d {
                         DerefOperand::Register(Register::Hl) => {
                             let v = memory_bus.read_u8(self.hl.get_u16());
                             self.set_r8(&r_dest, v);
-                            8
+                            Some(8)
                         }
                         DerefOperand::Register(r_src)
                             if r_src == Register::Bc || r_src == Register::De =>
@@ -192,7 +204,7 @@ impl Cpu {
                             }
                             let v = memory_bus.read_u8(self.get_r16(&r_src));
                             self.set_a(v);
-                            8
+                            Some(8)
                         }
                         DerefOperand::Register(Register::HlPlus) => {
                             if r_dest != Register::A {
@@ -205,7 +217,7 @@ impl Cpu {
                                 temp
                             };
                             self.set_a(v);
-                            8
+                            Some(8)
                         }
                         DerefOperand::Register(Register::HlMinus) => {
                             if r_dest != Register::A {
@@ -218,7 +230,7 @@ impl Cpu {
                                 temp
                             };
                             self.set_a(v);
-                            8
+                            Some(8)
                         }
                         DerefOperand::Address(addr) => {
                             if r_dest != Register::A {
@@ -226,7 +238,7 @@ impl Cpu {
                             }
                             let v = memory_bus.read_u8(addr);
                             self.set_a(v);
-                            16
+                            Some(16)
                         }
                         DerefOperand::Ff00Offset(offset) => {
                             if r_dest != Register::A {
@@ -234,7 +246,7 @@ impl Cpu {
                             }
                             let v = memory_bus.read_u8(0xff00_u16.wrapping_add(u16::from(offset)));
                             self.set_a(v);
-                            12
+                            Some(12)
                         }
                         DerefOperand::Ff00PlusC => {
                             if r_dest != Register::A {
@@ -243,7 +255,7 @@ impl Cpu {
                             let v = memory_bus
                                 .read_u8(0xff00_u16.wrapping_add(u16::from(self.bc.get_low())));
                             self.set_a(v);
-                            8
+                            Some(8)
                         }
                         DerefOperand::Register(_) => unreachable!(),
                     },
@@ -258,7 +270,7 @@ impl Cpu {
                                 _ => unreachable!(),
                             };
                             memory_bus.write_u8(self.hl.get_u16(), v);
-                            cycles
+                            Some(cycles)
                         }
                         Register::Bc | Register::De => {
                             if source != Operand::Register(Register::A) {
@@ -266,7 +278,7 @@ impl Cpu {
                             }
                             let v = self.get_a();
                             memory_bus.write_u8(self.get_r16(&r), v);
-                            8
+                            Some(8)
                         }
                         Register::HlPlus => {
                             if source != Operand::Register(Register::A) {
@@ -276,7 +288,7 @@ impl Cpu {
                             let hl = self.hl.get_u16_mut();
                             memory_bus.write_u8(*hl, v);
                             *hl += 1;
-                            8
+                            Some(8)
                         }
                         Register::HlMinus => {
                             if source != Operand::Register(Register::A) {
@@ -286,7 +298,7 @@ impl Cpu {
                             let hl = self.hl.get_u16_mut();
                             memory_bus.write_u8(*hl, v);
                             *hl -= 1;
-                            8
+                            Some(8)
                         }
                         _ => unreachable!(),
                     },
@@ -296,7 +308,7 @@ impl Cpu {
                         }
                         let v = self.get_a();
                         memory_bus.write_u8(addr, v);
-                        16
+                        Some(16)
                     }
                     DerefOperand::Ff00Offset(offset) => {
                         if source != Operand::Register(Register::A) {
@@ -304,7 +316,7 @@ impl Cpu {
                         }
                         let v = self.get_a();
                         memory_bus.write_u8(0xff00_u16.wrapping_add(u16::from(offset)), v);
-                        8
+                        Some(8)
                     }
                     DerefOperand::Ff00PlusC => {
                         if source != Operand::Register(Register::A) {
@@ -312,7 +324,7 @@ impl Cpu {
                         }
                         let v = self.get_a();
                         memory_bus.write_u8(0xff00_u16.wrapping_add(u16::from(self.bc.get_low())), v);
-                        8
+                        Some(8)
                     }
                 },
                 _ => unreachable!(),
@@ -330,14 +342,14 @@ impl Cpu {
                     match source {
                         Operand::U16(v) => {
                             self.set_r16(&r, v);
-                            12
+                            Some(12)
                         }
                         Operand::Register(Register::Hl) => {
                             if r != Register::Sp {
                                 panic!("Destination must be SP for ld from HL!");
                             }
                             self.set_r16(&r, self.hl.get_u16());
-                            8
+                            Some(8)
                         }
                         Operand::StackOffset(d) => {
                             if r != Register::Hl {
@@ -359,7 +371,7 @@ impl Cpu {
                                 (self.sp & 0xf) + (d_u16 & 0xf) > 0xf,
                             );
                             self.set_r16(&r, sum);
-                            12
+                            Some(12)
                         }
                         _ => unreachable!(),
                     }
@@ -367,7 +379,7 @@ impl Cpu {
                 Operand::Deref(DerefOperand::Address(addr)) => match source {
                     Operand::Register(Register::Sp) => {
                         memory_bus.write_u16(addr, self.sp);
-                        20
+                        Some(20)
                     }
                     _ => unreachable!(),
                 },
@@ -376,11 +388,11 @@ impl Cpu {
             Opcode::Jp { destination } => match destination {
                 Operand::U16(address) => {
                     self.pc = address;
-                    16
+                    Some(16)
                 }
                 Operand::Register(Register::Hl) => {
                     self.pc = self.hl.get_u16();
-                    4
+                    Some(4)
                 }
                 _ => unreachable!(),
             },
@@ -390,26 +402,26 @@ impl Cpu {
             } => {
                 if self.check_condition(&condition) {
                     self.pc = destination;
-                    16
+                    Some(16)
                 } else {
-                    12
+                    Some(12)
                 }
             }
             Opcode::Jr { offset } => {
                 self.pc = (i32::from(self.pc) + i32::from(offset)) as u16;
-                12
+                Some(12)
             }
             Opcode::JrCond { condition, offset } => {
                 if self.check_condition(&condition) {
                     self.pc = (i32::from(self.pc) + i32::from(offset)) as u16;
-                    12
+                    Some(12)
                 } else {
-                    8
+                    Some(8)
                 }
             }
             Opcode::Call { destination } => {
                 self.call(memory_bus, destination);
-                24
+                Some(24)
             }
             Opcode::CallCond {
                 condition,
@@ -417,27 +429,27 @@ impl Cpu {
             } => {
                 if self.check_condition(&condition) {
                     self.call(memory_bus, destination);
-                    24
+                    Some(24)
                 } else {
-                    16
+                    Some(16)
                 }
             }
             Opcode::Ret => {
                 self.ret(memory_bus);
-                16
+                Some(16)
             }
             Opcode::RetCond { condition } => {
                 if self.check_condition(&condition) {
                     self.ret(memory_bus);
-                    20
+                    Some(20)
                 } else {
-                    8
+                    Some(8)
                 }
             }
             Opcode::Reti => {
                 self.ret(memory_bus);
                 self.interrupts_enabled = true;
-                16
+                Some(16)
             }
             Opcode::Pop { register } => {
                 match register {
@@ -460,7 +472,7 @@ impl Cpu {
                     }
                     _ => unreachable!(),
                 }
-                12
+                Some(12)
             }
             Opcode::Push { register } => {
                 match register {
@@ -470,11 +482,11 @@ impl Cpu {
                     Register::Af => self.push(memory_bus, self.af.get_u16()),
                     _ => unreachable!(),
                 }
-                16
+                Some(16)
             }
             Opcode::Rst { vector } => {
                 self.call(memory_bus, u16::from(vector));
-                16
+                Some(16)
             }
             Opcode::Bit { bit, destination } => {
                 // Clear subtraction flag, set half-carry flag
@@ -490,7 +502,7 @@ impl Cpu {
                         } else {
                             self.set_zero_flag();
                         }
-                        8
+                        Some(8)
                     }
                     Operand::Deref(DerefOperand::Register(Register::Hl)) => {
                         let v = memory_bus.read_u8(self.hl.get_u16());
@@ -501,7 +513,7 @@ impl Cpu {
                         } else {
                             self.set_zero_flag();
                         }
-                        12
+                        Some(12)
                     }
                     _ => unreachable!(),
                 }
@@ -510,13 +522,13 @@ impl Cpu {
                 Operand::Register(r) => {
                     let v = self.get_r8_mut(&r);
                     Self::reset_bit(bit, v);
-                    8
+                    Some(8)
                 }
                 Operand::Deref(DerefOperand::Register(Register::Hl)) => {
                     let mut v = memory_bus.read_u8(self.hl.get_u16());
                     Self::reset_bit(bit, &mut v);
                     memory_bus.write_u8(self.hl.get_u16(), v);
-                    16
+                    Some(16)
                 }
                 _ => unreachable!(),
             },
@@ -524,13 +536,13 @@ impl Cpu {
                 Operand::Register(r) => {
                     let v = self.get_r8_mut(&r);
                     Self::set_bit(bit, v);
-                    8
+                    Some(8)
                 }
                 Operand::Deref(DerefOperand::Register(Register::Hl)) => {
                     let mut v = memory_bus.read_u8(self.hl.get_u16());
                     Self::set_bit(bit, &mut v);
                     memory_bus.write_u8(self.hl.get_u16(), v);
-                    16
+                    Some(16)
                 }
                 _ => unreachable!(),
             },
@@ -538,7 +550,7 @@ impl Cpu {
                 let (v, cycles) = self.extract_u8_arithmetic_operand(memory_bus, operand);
 
                 self.add8_with_carry(v, false, false);
-                cycles
+                Some(cycles)
             }
             Opcode::Add16 { register, operand } => {
                 match register {
@@ -557,7 +569,7 @@ impl Cpu {
                             self.set_carry_flag_from_bool(carry);
                             self.set_half_carry_flag_from_bool((hl & 0xfff) + (v & 0xfff) > 0xfff);
                             self.hl.set_u16(sum);
-                            8
+                            Some(8)
                         } else {
                             unreachable!()
                         }
@@ -580,7 +592,7 @@ impl Cpu {
                                 (self.sp & 0xf) + (d_u16 & 0xf) > 0xf,
                             );
                             self.sp = sum;
-                            16
+                            Some(16)
                         } else {
                             unreachable!()
                         }
@@ -596,7 +608,7 @@ impl Cpu {
                     self.clear_subtraction_flag();
                     self.set_zero_flag_from_bool(res == 0);
                     self.set_half_carry_flag_from_bool((v & 0xf) == 0xf);
-                    4
+                    Some(4)
                 }
                 Operand::Deref(DerefOperand::Register(Register::Hl)) => {
                     let v = memory_bus.read_u8(self.hl.get_u16());
@@ -605,7 +617,7 @@ impl Cpu {
                     self.clear_subtraction_flag();
                     self.set_zero_flag_from_bool(res == 0);
                     self.set_half_carry_flag_from_bool((v & 0xf) == 0xf);
-                    12
+                    Some(12)
                 }
                 _ => unreachable!(),
             },
@@ -629,7 +641,7 @@ impl Cpu {
                     }
                     _ => unreachable!(),
                 };
-                8
+                Some(8)
             }
             Opcode::Dec { operand } => match operand {
                 Operand::Register(r) => {
@@ -639,7 +651,7 @@ impl Cpu {
                     self.set_zero_flag_from_bool(res == 0);
                     self.set_subtraction_flag();
                     self.set_half_carry_flag_from_bool((res & 0xf) == 0xf);
-                    4
+                    Some(4)
                 }
                 Operand::Deref(DerefOperand::Register(Register::Hl)) => {
                     let v = memory_bus.read_u8(self.hl.get_u16());
@@ -648,7 +660,7 @@ impl Cpu {
                     self.set_zero_flag_from_bool(res == 0);
                     self.set_subtraction_flag();
                     self.set_half_carry_flag_from_bool((res & 0xf) == 0xf);
-                    12
+                    Some(12)
                 }
                 _ => unreachable!(),
             },
@@ -672,13 +684,13 @@ impl Cpu {
                     }
                     _ => unreachable!(),
                 };
-                8
+                Some(8)
             }
             Opcode::Adc { operand } => {
                 let (v, cycles) = self.extract_u8_arithmetic_operand(memory_bus, operand);
 
                 self.add8_with_carry(v, true, false);
-                cycles
+                Some(cycles)
             }
             Opcode::Sub { operand } => {
                 let (v, cycles) = self.extract_u8_arithmetic_operand(memory_bus, operand);
@@ -686,7 +698,7 @@ impl Cpu {
                 self.add8_with_carry(v, false, true);
                 // Toggle carry
                 // self.set_carry_flag_from_bool(!self.get_carry_flag());
-                cycles
+                Some(cycles)
             }
             Opcode::Sbc { operand } => {
                 let (v, cycles) = self.extract_u8_arithmetic_operand(memory_bus, operand);
@@ -694,7 +706,7 @@ impl Cpu {
                 self.add8_with_carry(v, true, true);
                 // Toggle carry
                 // self.set_carry_flag_from_bool(!self.get_carry_flag());
-                cycles
+                Some(cycles)
             }
             Opcode::And { operand } => {
                 let (v, cycles) = self.extract_u8_arithmetic_operand(memory_bus, operand);
@@ -708,7 +720,7 @@ impl Cpu {
                 self.clear_subtraction_flag();
                 self.set_half_carry_flag();
                 self.clear_carry_flag();
-                cycles
+                Some(cycles)
             }
             Opcode::Xor { operand } => {
                 let (v, cycles) = self.extract_u8_arithmetic_operand(memory_bus, operand);
@@ -722,7 +734,7 @@ impl Cpu {
                 self.clear_subtraction_flag();
                 self.clear_carry_flag();
                 self.clear_half_carry_flag();
-                cycles
+                Some(cycles)
             }
             Opcode::Or { operand } => {
                 let (v, cycles) = self.extract_u8_arithmetic_operand(memory_bus, operand);
@@ -736,7 +748,7 @@ impl Cpu {
                 self.clear_subtraction_flag();
                 self.clear_carry_flag();
                 self.clear_half_carry_flag();
-                cycles
+                Some(cycles)
             }
             Opcode::Cp { operand } => {
                 let (v, cycles) = self.extract_u8_arithmetic_operand(memory_bus, operand);
@@ -746,13 +758,13 @@ impl Cpu {
                 self.set_subtraction_flag();
                 self.set_carry_flag_from_bool(a < v);
                 self.set_half_carry_flag_from_bool((a % 16) < (v % 16));
-                cycles
+                Some(cycles)
             }
             Opcode::Cpl => {
                 self.set_a(!self.get_a());
                 self.set_subtraction_flag();
                 self.set_half_carry_flag();
-                4
+                Some(4)
             }
             Opcode::Daa => {
                 // from https://forums.nesdev.com/viewtopic.php?t=15944
@@ -779,7 +791,7 @@ impl Cpu {
                 self.set_zero_flag_from_bool(a == 0);
                 self.clear_half_carry_flag();
                 self.set_a(a);
-                4
+                Some(4)
             }
             Opcode::Rlca => {
                 let mut a = self.get_a();
@@ -791,7 +803,7 @@ impl Cpu {
                 // only the carry flag should be set after this;
                 self.clear_flags();
                 self.set_carry_flag_from_bool(carry);
-                4
+                Some(4)
             }
             Opcode::Rla => {
                 let mut a = self.get_a();
@@ -804,7 +816,7 @@ impl Cpu {
                 // only the carry flag should be set after this;
                 self.clear_flags();
                 self.set_carry_flag_from_bool(carry);
-                4
+                Some(4)
             }
             Opcode::Rrca => {
                 let mut a = self.get_a();
@@ -816,7 +828,7 @@ impl Cpu {
                 // only the carry flag should be set after this;
                 self.clear_flags();
                 self.set_carry_flag_from_bool(carry);
-                4
+                Some(4)
             }
             Opcode::Rra => {
                 let mut a = self.get_a();
@@ -829,7 +841,7 @@ impl Cpu {
                 // only the carry flag should be set after this;
                 self.clear_flags();
                 self.set_carry_flag_from_bool(carry);
-                4
+                Some(4)
             }
             Opcode::Rlc { operand } => match operand {
                 Operand::Register(r) => {
@@ -843,7 +855,7 @@ impl Cpu {
                     self.clear_flags();
                     self.set_carry_flag_from_bool(carry);
                     self.set_zero_flag_from_bool(v == 0);
-                    8
+                    Some(8)
                 }
                 Operand::Deref(DerefOperand::Register(Register::Hl)) => {
                     let mut v = memory_bus.read_u8(self.hl.get_u16());
@@ -856,7 +868,7 @@ impl Cpu {
                     self.clear_flags();
                     self.set_carry_flag_from_bool(carry);
                     self.set_zero_flag_from_bool(v == 0);
-                    16
+                    Some(16)
                 }
                 _ => unreachable!(),
             },
@@ -873,7 +885,7 @@ impl Cpu {
                     self.clear_flags();
                     self.set_carry_flag_from_bool(carry);
                     self.set_zero_flag_from_bool(v == 0);
-                    8
+                    Some(8)
                 }
                 Operand::Deref(DerefOperand::Register(Register::Hl)) => {
                     let mut v = memory_bus.read_u8(self.hl.get_u16());
@@ -887,7 +899,7 @@ impl Cpu {
                     self.clear_flags();
                     self.set_carry_flag_from_bool(carry);
                     self.set_zero_flag_from_bool(v == 0);
-                    16
+                    Some(16)
                 }
                 _ => unreachable!(),
             },
@@ -903,7 +915,7 @@ impl Cpu {
                     self.clear_flags();
                     self.set_carry_flag_from_bool(carry);
                     self.set_zero_flag_from_bool(v == 0);
-                    8
+                    Some(8)
                 }
                 Operand::Deref(DerefOperand::Register(Register::Hl)) => {
                     let mut v = memory_bus.read_u8(self.hl.get_u16());
@@ -916,7 +928,7 @@ impl Cpu {
                     self.clear_flags();
                     self.set_carry_flag_from_bool(carry);
                     self.set_zero_flag_from_bool(v == 0);
-                    16
+                    Some(16)
                 }
                 _ => unreachable!(),
             },
@@ -933,7 +945,7 @@ impl Cpu {
                     self.clear_flags();
                     self.set_carry_flag_from_bool(carry);
                     self.set_zero_flag_from_bool(v == 0);
-                    8
+                    Some(8)
                 }
                 Operand::Deref(DerefOperand::Register(Register::Hl)) => {
                     let mut v = memory_bus.read_u8(self.hl.get_u16());
@@ -947,7 +959,7 @@ impl Cpu {
                     self.clear_flags();
                     self.set_carry_flag_from_bool(carry);
                     self.set_zero_flag_from_bool(v == 0);
-                    16
+                    Some(16)
                 }
                 _ => unreachable!(),
             },
@@ -963,7 +975,7 @@ impl Cpu {
                     self.clear_flags();
                     self.set_carry_flag_from_bool(carry);
                     self.set_zero_flag_from_bool(v == 0);
-                    8
+                    Some(8)
                 }
                 Operand::Deref(DerefOperand::Register(Register::Hl)) => {
                     let mut v = memory_bus.read_u8(self.hl.get_u16());
@@ -976,7 +988,7 @@ impl Cpu {
                     self.clear_flags();
                     self.set_carry_flag_from_bool(carry);
                     self.set_zero_flag_from_bool(v == 0);
-                    16
+                    Some(16)
                 }
                 _ => unreachable!(),
             },
@@ -989,7 +1001,7 @@ impl Cpu {
                     // only the zero flag should be set after this;
                     self.clear_flags();
                     self.set_zero_flag_from_bool(v == 0);
-                    8
+                    Some(8)
                 }
                 Operand::Deref(DerefOperand::Register(Register::Hl)) => {
                     let mut v = memory_bus.read_u8(self.hl.get_u16());
@@ -999,7 +1011,7 @@ impl Cpu {
                     // only the zero flag should be set after this;
                     self.clear_flags();
                     self.set_zero_flag_from_bool(v == 0);
-                    16
+                    Some(16)
                 }
                 _ => unreachable!(),
             },
@@ -1015,7 +1027,7 @@ impl Cpu {
                     self.clear_flags();
                     self.set_carry_flag_from_bool(carry);
                     self.set_zero_flag_from_bool(v == 0);
-                    8
+                    Some(8)
                 }
                 Operand::Deref(DerefOperand::Register(Register::Hl)) => {
                     let mut v = memory_bus.read_u8(self.hl.get_u16());
@@ -1028,7 +1040,7 @@ impl Cpu {
                     self.clear_flags();
                     self.set_carry_flag_from_bool(carry);
                     self.set_zero_flag_from_bool(v == 0);
-                    16
+                    Some(16)
                 }
                 _ => unreachable!(),
             },
@@ -1044,7 +1056,7 @@ impl Cpu {
                     self.clear_flags();
                     self.set_carry_flag_from_bool(carry);
                     self.set_zero_flag_from_bool(v == 0);
-                    8
+                    Some(8)
                 }
                 Operand::Deref(DerefOperand::Register(Register::Hl)) => {
                     let mut v = memory_bus.read_u8(self.hl.get_u16());
@@ -1057,7 +1069,7 @@ impl Cpu {
                     self.clear_flags();
                     self.set_carry_flag_from_bool(carry);
                     self.set_zero_flag_from_bool(v == 0);
-                    16
+                    Some(16)
                 }
                 _ => unreachable!(),
             },
@@ -1066,7 +1078,7 @@ impl Cpu {
                 self.set_carry_flag();
                 self.clear_half_carry_flag();
                 self.clear_subtraction_flag();
-                4
+                Some(4)
             }
             Opcode::Ccf => {
                 // Toggles Carry, clears half carry and subtraction
@@ -1077,15 +1089,15 @@ impl Cpu {
                 }
                 self.clear_half_carry_flag();
                 self.clear_subtraction_flag();
-                4
+                Some(4)
             }
             Opcode::Di => {
                 self.interrupts_enabled = false;
-                4
+                Some(4)
             }
             Opcode::Ei => {
                 self.interrupts_enabled = true;
-                4
+                Some(4)
             }
         }
     }

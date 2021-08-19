@@ -1,4 +1,5 @@
 use super::cartridge::Cartridge;
+use super::debug::{AccessType, Breakpoint};
 use super::mmio::{apu::Sound, joypad::Joypad, lcd::Lcd, serial::Comms, timer::Timer};
 use super::ppu::PictureProcessingUnit;
 
@@ -67,6 +68,9 @@ pub struct MemoryBus {
     pub interrupt_flags: u8,
     pub high_ram: [u8; 127],
     pub interrupt_enable: u8,
+    last_bus_value: u8,
+    memory_breakpoints: Vec<Breakpoint>,
+    break_reason: Option<Breakpoint>,
 }
 
 impl MemoryBus {
@@ -89,13 +93,55 @@ impl MemoryBus {
             interrupt_flags: 0,
             high_ram: [0; 127],
             interrupt_enable: 0,
+            last_bus_value: 0,
+            memory_breakpoints: Vec::new(),
+            break_reason: None,
         }
     }
 
     #[must_use]
-    pub fn read_u8(&self, address: u16) -> u8 {
+    pub fn reset(self) -> Self {
+        Self::new(self.cartridge)
+    }
+
+    pub fn add_breakpoint(&mut self, bp: Breakpoint) {
+        // Only add it if it isn't just an execute breakpoint
+        if matches!(bp.access_type, AccessType::Execute) {
+            return;
+        }
+        self.memory_breakpoints.push(bp);
+    }
+
+    #[must_use]
+    pub fn check_breakpoints(&self, address: u16, write: bool) -> Option<Breakpoint> {
+        for bp in &self.memory_breakpoints {
+            if bp.matches_address(address) && (write && bp.access_type.on_write())
+                || (!write && bp.access_type.on_read())
+            {
+                return Some(*bp);
+            }
+        }
+        None
+    }
+
+    #[must_use]
+    pub fn get_break_reason(&mut self) -> Option<Breakpoint> {
+        self.break_reason.take()
+    }
+
+    #[must_use]
+    pub fn read_u8(&mut self, address: u16) -> u8 {
         let region = MemoryRegion::from(address);
-        match region {
+        // Technically there are more is one bus and this is complicated
+        if self.lcd.get_dma_running() && !matches!(region, MemoryRegion::HighRam(_)) {
+            return self.last_bus_value;
+        }
+        self.break_reason = self
+            .break_reason
+            .or_else(|| self.check_breakpoints(address, false));
+        // I'd like to overwrite self.last_bus_value here, but I also don't want to make this
+        // a &mut self function...
+        self.last_bus_value = match region {
             MemoryRegion::CartridgeBank0(offset) => self.cartridge.read_rom_bank_0(offset),
             MemoryRegion::CartridgeBankSelectable(offset) => {
                 self.cartridge.read_rom_selected_bank(offset)
@@ -122,7 +168,8 @@ impl MemoryBus {
             MemoryRegion::Key1Flag => 0xff, // Undocumented flag, KEY1 in CGB
             MemoryRegion::HighRam(offset) => self.high_ram[offset as usize],
             MemoryRegion::InterruptEnable => self.interrupt_enable as u8,
-        }
+        };
+        self.last_bus_value
     }
 
     #[must_use]
@@ -133,7 +180,7 @@ impl MemoryBus {
     }
 
     #[must_use]
-    pub fn read_mem(&self, address: u16, length: u16) -> Vec<u8> {
+    pub fn read_mem(&mut self, address: u16, length: u16) -> Vec<u8> {
         let mut vec = Vec::with_capacity(length as usize);
 
         for addr in address..address + length {
@@ -147,6 +194,13 @@ impl MemoryBus {
     pub fn write_u8(&mut self, address: u16, byte: u8) {
         #![allow(clippy::match_same_arms)]
         let region = MemoryRegion::from(address);
+        // Technically there are more is one bus and this is complicated
+        if self.lcd.get_dma_running() && !matches!(region, MemoryRegion::HighRam(_)) {
+            return;
+        }
+        self.break_reason = self
+            .break_reason
+            .or_else(|| self.check_breakpoints(address, true));
         match region {
             MemoryRegion::CartridgeBank0(offset) => self.cartridge.write_rom_bank_0(offset, byte),
             MemoryRegion::CartridgeBankSelectable(offset) => {
@@ -170,6 +224,7 @@ impl MemoryBus {
             MemoryRegion::HighRam(offset) => self.high_ram[offset as usize] = byte,
             MemoryRegion::InterruptEnable => self.interrupt_enable = byte,
         }
+        self.last_bus_value = byte;
     }
 
     pub fn write_u16(&mut self, address: u16, v: u16) {
@@ -180,6 +235,25 @@ impl MemoryBus {
         for (i, byte) in bytes.iter().enumerate() {
             #[allow(clippy::cast_possible_truncation)]
             self.write_u8(address.wrapping_add(i as u16), *byte);
+        }
+    }
+
+    pub fn run_dma(&mut self, cycles: u64) {
+        if !self.lcd.get_dma_running() {
+            return;
+        }
+
+        for _ in 0..cycles {
+            let (source, destination) = match self.lcd.get_dma_addresses() {
+                Some(v) => v,
+                None => break,
+            };
+
+            let v = self.read_u8(source);
+            self.last_bus_value = v;
+            self.write_u8(destination, v);
+
+            self.lcd.tick_dma();
         }
     }
 }

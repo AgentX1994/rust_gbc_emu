@@ -287,8 +287,10 @@ pub struct Lcd {
     object_pallete_1: Palette,
     window_y: u8,
     window_x: u8,
-    lx: u16,
+    lx: i16,
     last_stat_interrupt: bool,
+    dma_running: bool,
+    dma_low_byte: u8,
 }
 
 impl Default for Lcd {
@@ -306,8 +308,10 @@ impl Default for Lcd {
             object_pallete_1: 0xff.into(),
             window_y: 0,
             window_x: 0,
-            lx: 0,
+            lx: -80,
             last_stat_interrupt: true,
+            dma_running: false,
+            dma_low_byte: 0,
         }
     }
 }
@@ -340,7 +344,11 @@ impl Lcd {
             0x3 => self.scroll_x = byte,
             0x4 => (), // unwritable: self.ly = byte,
             0x5 => self.ly_compare = byte,
-            0x6 => self.dma_start_high_byte = byte,
+            0x6 => {
+                self.dma_start_high_byte = byte;
+                self.dma_low_byte = 0;
+                self.dma_running = true;
+            }
             0x7 => self.background_palette = byte.into(),
             0x8 => self.object_palette_0 = byte.into(),
             0x9 => self.object_pallete_1 = byte.into(),
@@ -355,7 +363,7 @@ impl Lcd {
         let mut vblank_interrupt = false;
         let mut stat_interrupt = false;
         self.lx += 1;
-        if self.lx > 456 {
+        if self.lx > 376 {
             self.ly += 1;
             self.lx = 0;
         }
@@ -385,12 +393,17 @@ impl Lcd {
     }
 
     #[must_use]
+    pub fn get_lcd_enable(&self) -> bool {
+        self.control.enable.to_bool()
+    }
+
+    #[must_use]
     pub fn get_ly(&self) -> u8 {
         self.ly
     }
 
     #[must_use]
-    pub fn get_lx(&self) -> u16 {
+    pub fn get_lx(&self) -> i16 {
         self.lx
     }
 
@@ -420,8 +433,23 @@ impl Lcd {
     }
 
     #[must_use]
+    pub fn get_sprite_enable(&self) -> bool {
+        self.control.sprite_enable.to_bool()
+    }
+
+    #[must_use]
+    pub fn get_sprite_size(&self) -> SpriteSize {
+        self.control.sprite_size
+    }
+
+    #[must_use]
     pub fn get_object_palettes(&self) -> (Palette, Palette) {
         (self.object_palette_0, self.object_pallete_1)
+    }
+
+    #[must_use]
+    pub fn get_window_enable(&self) -> bool {
+        self.control.window_enable.to_bool()
     }
 
     #[must_use]
@@ -432,5 +460,28 @@ impl Lcd {
     #[must_use]
     pub fn get_window_tile_map(&self) -> TileMap {
         self.control.window_tile_map
+    }
+
+    #[must_use]
+    pub fn get_dma_running(&self) -> bool {
+        self.dma_running
+    }
+
+    #[must_use]
+    pub fn get_dma_addresses(&self) -> Option<(u16, u16)> {
+        if self.dma_running {
+            let source = (u16::from(self.dma_start_high_byte) << 8) | u16::from(self.dma_low_byte);
+            let destination = 0xfe00 | u16::from(self.dma_low_byte);
+            Some((source, destination))
+        } else {
+            None
+        }
+    }
+
+    pub fn tick_dma(&mut self) {
+        self.dma_low_byte += 1;
+        if self.dma_low_byte == 0xa0 {
+            self.dma_running = false;
+        }
     }
 }

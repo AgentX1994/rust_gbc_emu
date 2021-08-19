@@ -70,7 +70,7 @@ impl Debugger {
         Debugger { gbc }
     }
 
-    pub fn run(&mut self) {
+    pub fn run(mut self) {
         let mut rl = Editor::<()>::new();
         if rl.load_history("history.txt").is_err() {
             // Do nothing
@@ -168,7 +168,15 @@ impl Debugger {
                             }
                         }
                         "r" | "run" | "g" | "go" => {
-                            self.gbc.run();
+                            let (_, problem) = self.gbc.run();
+                            if problem {
+                                println!("Encountered an unknown instruction!");
+                            } else {
+                                match self.gbc.get_last_breakpoint() {
+                                    Some(bp) => println!("Break Reason: {}", bp),
+                                    None => println!("Break Reason: None"),
+                                }
+                            }
                             self.gbc.print_next_instruction();
                         }
                         "state" | "dump" | "regs" => {
@@ -283,6 +291,9 @@ impl Debugger {
                                     "basic"
                                 }
                             );
+                        }
+                        "restart" | "reset" => {
+                            self.gbc = self.gbc.reset();
                         }
                         _ => println!("Unknown command {}", tokens[0]),
                     }

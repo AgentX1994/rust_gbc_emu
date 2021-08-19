@@ -70,7 +70,7 @@ impl AccessType {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct Breakpoint {
     pub address: u16,
     pub access_type: AccessType,
@@ -92,5 +92,11 @@ impl Breakpoint {
     #[must_use]
     pub fn matches_address(&self, address: u16) -> bool {
         self.address <= address && address < (self.address + self.length)
+    }
+}
+
+impl Display for Breakpoint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:#04x} {:#04x} bytes {} {}", self.address, self.length, self.access_type, self.reason)
     }
 }

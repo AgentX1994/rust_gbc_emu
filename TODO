@@ -1,5 +1,9 @@
-- add display
-- ensure MBC support is good enough
-- implement interrupts
-- implement MMIO stuff
-- implement DMA
+- Fix sprites
+- Find a way to have all breakpoints in one Vec
+- Implement input
+- Replace busy wait with occasional sleeps?
+- Become cycle accurate?
+- Check MBC works for more complicated MBC types
+- Implement APU
+- Implement GBC?
+- Implement peripherals?

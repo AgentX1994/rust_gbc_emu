@@ -24,11 +24,11 @@ impl Joypad {
         // wrong here
         #[allow(clippy::if_not_else)]
         if self.selected & (1 << 4) != 0 {
-            0xd | self.selected | (self.input & 0xf)
+            0xc0 | self.selected | (self.input & 0xf)
         } else if self.selected & (1 << 5) != 0 {
-            0xd | self.selected | ((self.input >> 4) & 0xf)
+            0xc0 | self.selected | ((self.input >> 4) & 0xf)
         } else {
-            0xd | self.selected
+            0xc0 | self.selected | 0xf
         }
     }
 }
