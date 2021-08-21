@@ -31,7 +31,9 @@ impl Comms {
     }
 
     pub fn tick(&mut self, cycles: u64) -> bool {
-        if self.control & 0x80 == 0 {
+        // Can't use external clock, so check both
+        // enable and clock source
+        if self.control & 0x81 == 0 {
             self.ticks = 0;
             return false;
         }

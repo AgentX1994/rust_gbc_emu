@@ -19,6 +19,7 @@ enum MemoryRegion {
     WaveformRam(u16),
     Lcd(u16),
     Key1Flag,
+    BootRomDisable,
     HighRam(u16),
     InterruptEnable,
 }
@@ -43,6 +44,7 @@ impl From<u16> for MemoryRegion {
             0xff30..=0xff3f => MemoryRegion::WaveformRam(address - 0xff30),
             0xff40..=0xff4b => MemoryRegion::Lcd(address - 0xff40),
             0xff4d => MemoryRegion::Key1Flag,
+            0xff50 => MemoryRegion::BootRomDisable,
             0xff80..=0xfffe => MemoryRegion::HighRam(address - 0xff80),
             0xffff => MemoryRegion::InterruptEnable,
             _ => MemoryRegion::Unused,
@@ -60,6 +62,7 @@ pub struct MemoryBus {
     pub timer_control: Timer,
     pub sound: Sound,
     pub lcd: Lcd,
+    pub boot_rom_disable: u8,
     pub vram_select: u8,
     pub disable_boot_rom: bool,
     pub vram_dma: [u8; 4],
@@ -68,6 +71,7 @@ pub struct MemoryBus {
     pub interrupt_flags: u8,
     pub high_ram: [u8; 127],
     pub interrupt_enable: u8,
+    boot_rom: &'static [u8; 256],
     last_bus_value: u8,
     memory_breakpoints: Vec<Breakpoint>,
     break_reason: Option<Breakpoint>,
@@ -85,6 +89,7 @@ impl MemoryBus {
             timer_control: Timer::default(),
             sound: Sound::default(),
             lcd: Lcd::default(),
+            boot_rom_disable: 0,
             vram_select: 0,
             disable_boot_rom: false,
             vram_dma: [0; 4],
@@ -93,6 +98,7 @@ impl MemoryBus {
             interrupt_flags: 0,
             high_ram: [0; 127],
             interrupt_enable: 0,
+            boot_rom: include_bytes!("../../dmg_boot.bin"),
             last_bus_value: 0,
             memory_breakpoints: Vec::new(),
             break_reason: None,
@@ -142,7 +148,13 @@ impl MemoryBus {
         // I'd like to overwrite self.last_bus_value here, but I also don't want to make this
         // a &mut self function...
         self.last_bus_value = match region {
-            MemoryRegion::CartridgeBank0(offset) => self.cartridge.read_rom_bank_0(offset),
+            MemoryRegion::CartridgeBank0(offset) => {
+                if self.boot_rom_disable == 0 && offset < 0x100 {
+                    self.boot_rom[offset as usize]
+                } else {
+                    self.cartridge.read_rom_bank_0(offset)
+                }
+            }
             MemoryRegion::CartridgeBankSelectable(offset) => {
                 self.cartridge.read_rom_selected_bank(offset)
             }
@@ -165,6 +177,7 @@ impl MemoryBus {
             MemoryRegion::Sound(offset) => self.sound.read_u8(offset),
             MemoryRegion::WaveformRam(offset) => self.sound.read_u8_from_waveform(offset),
             MemoryRegion::Lcd(offset) => self.lcd.read_u8(offset),
+            MemoryRegion::BootRomDisable => self.boot_rom_disable,
             MemoryRegion::Key1Flag => 0xff, // Undocumented flag, KEY1 in CGB
             MemoryRegion::HighRam(offset) => self.high_ram[offset as usize],
             MemoryRegion::InterruptEnable => self.interrupt_enable as u8,
@@ -220,6 +233,7 @@ impl MemoryBus {
             MemoryRegion::Sound(offset) => self.sound.write_u8(offset, byte),
             MemoryRegion::WaveformRam(offset) => self.sound.write_u8_from_waveform(offset, byte),
             MemoryRegion::Lcd(offset) => self.lcd.write_u8(offset, byte),
+            MemoryRegion::BootRomDisable => self.boot_rom_disable = byte,
             MemoryRegion::Key1Flag => (),
             MemoryRegion::HighRam(offset) => self.high_ram[offset as usize] = byte,
             MemoryRegion::InterruptEnable => self.interrupt_enable = byte,

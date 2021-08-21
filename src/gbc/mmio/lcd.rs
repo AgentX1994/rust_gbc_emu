@@ -291,6 +291,7 @@ pub struct Lcd {
     last_stat_interrupt: bool,
     dma_running: bool,
     dma_low_byte: u8,
+    dot_clock: u64,
 }
 
 impl Default for Lcd {
@@ -312,6 +313,7 @@ impl Default for Lcd {
             last_stat_interrupt: true,
             dma_running: false,
             dma_low_byte: 0,
+            dot_clock: 0,
         }
     }
 }
@@ -362,15 +364,22 @@ impl Lcd {
     pub fn tick(&mut self) -> (bool, bool) {
         let mut vblank_interrupt = false;
         let mut stat_interrupt = false;
-        self.lx += 1;
-        if self.lx > 376 {
-            self.ly += 1;
-            self.lx = 0;
-        }
-        if self.ly == 144 {
-            vblank_interrupt = true;
-        } else if self.ly == 154 {
+        if !self.control.enable.to_bool() {
+            self.lx = -80;
             self.ly = 0;
+            return (vblank_interrupt, stat_interrupt);
+        }
+        self.dot_clock += 1;
+
+        self.lx += 1;
+        if self.lx > 375 {
+            self.ly += 1;
+            self.lx = -80;
+            if self.ly == 144 {
+                vblank_interrupt = true;
+            } else if self.ly == 154 {
+                self.ly = 0;
+            }
         }
 
         if self.status.interrupt_on_hblank.to_bool() && self.lx == 160 {
@@ -389,6 +398,13 @@ impl Lcd {
         // only interrupt on rising edge
         let should_stat_interrupt = self.last_stat_interrupt != stat_interrupt;
         self.last_stat_interrupt = stat_interrupt;
+
+        if vblank_interrupt { 
+            if self.dot_clock != 70224 {
+                println!("ERROR: vblank timing incorrect! Took {} dots", self.dot_clock);
+            }
+            self.dot_clock = 0;
+        }
         (vblank_interrupt, should_stat_interrupt)
     }
 

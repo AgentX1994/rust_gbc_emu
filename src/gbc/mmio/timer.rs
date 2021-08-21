@@ -1,7 +1,7 @@
 // TODO support other clock speeds
 const DIV_TICK_RATE: u64 = 16384;
 const CPU_FREQ: u64 = 4_194_304;
-const CYCLES_PER_DIV_TICK: u64 = CPU_FREQ / DIV_TICK_RATE;
+const CYCLES_PER_DIV_TICK: u64 = CPU_FREQ / DIV_TICK_RATE; // 256
 
 #[derive(Debug)]
 pub struct Timer {
@@ -16,7 +16,7 @@ pub struct Timer {
 impl Default for Timer {
     fn default() -> Self {
         Self {
-            divider: 0x18,
+            divider: 0,
             timer_counter: 0,
             timer_reset_value: 0,
             control: 0,
@@ -62,10 +62,10 @@ impl Timer {
         } else {
             self.tma_cycles_counter += cycles;
             let cycles_per_tma_tick = match self.control & 0x3 {
-                0 => CPU_FREQ / 4096,
-                1 => CPU_FREQ / 262_144,
-                2 => CPU_FREQ / 65536,
-                3 => CPU_FREQ / 16384,
+                0 => 1024,
+                1 => 16,
+                2 => 64,
+                3 => 256,
                 _ => unreachable!(),
             };
             if self.tma_cycles_counter > cycles_per_tma_tick {

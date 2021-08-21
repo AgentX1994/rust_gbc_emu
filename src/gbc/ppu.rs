@@ -1,4 +1,4 @@
-use super::mmio::lcd::{Color, Lcd, TileMap};
+use super::mmio::lcd::{Color, Lcd, SpriteSize, TileMap};
 
 #[derive(Copy, Clone, Debug)]
 pub enum ColorIndex {
@@ -517,15 +517,15 @@ impl PictureProcessingUnit {
                         // Loop over each object and calculate if it should be drawn
                         for object in self.object_attribute_memory.sprites {
                             let sprite_y = i16::from(object.y) - 16;
-                            let sprite_x = object.x + 8;
+                            let sprite_x = object.x - 8;
                             let y_i16 = i16::from(y);
 
                             let mut should_be_drawn = match sprite_size {
-                                super::mmio::lcd::SpriteSize::Small => {
+                                SpriteSize::Small => {
                                     (sprite_y..(sprite_y+8)).contains(&y_i16)
                                         && (sprite_x..(sprite_x+8)).contains(&x)
                                 }
-                                super::mmio::lcd::SpriteSize::Large => {
+                                SpriteSize::Large => {
                                     (sprite_y..(sprite_y+16)).contains(&y_i16)
                                         && (sprite_x..(sprite_x+8)).contains(&x)
                                 }
@@ -535,7 +535,7 @@ impl PictureProcessingUnit {
 
                             if should_be_drawn {
                                 let color_index = match sprite_size {
-                                    super::mmio::lcd::SpriteSize::Small => {
+                                    SpriteSize::Small => {
                                         let tile_x = x - sprite_x;
                                         let tile_y = (y_i16 - sprite_y) as u8;
                                         self.get_color_at_pixel_for_sprite(
@@ -546,7 +546,7 @@ impl PictureProcessingUnit {
                                             object.attributes.flip_y,
                                         )
                                     }
-                                    super::mmio::lcd::SpriteSize::Large => {
+                                    SpriteSize::Large => {
                                         let tile_x = x - sprite_x;
                                         let tile_y = (y_i16 - sprite_y) as u8;
                                         // The hardware enforces that, for two tile

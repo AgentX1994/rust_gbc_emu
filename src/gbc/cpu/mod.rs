@@ -50,12 +50,12 @@ impl Default for Cpu {
     fn default() -> Self {
         Cpu {
             show_instructions: false,
-            af: RegisterStorage::new(0x01b0),
-            bc: RegisterStorage::new(0x0013),
-            de: RegisterStorage::new(0x00d8),
-            hl: RegisterStorage::new(0x014d),
-            pc: 0x100,
-            sp: 0xfffe,
+            af: RegisterStorage::default(),
+            bc: RegisterStorage::default(),
+            de: RegisterStorage::default(),
+            hl: RegisterStorage::default(),
+            pc: 0x0000,
+            sp: 0x0000,
             state: State::Running,
             interrupts_enabled: false,
         }
