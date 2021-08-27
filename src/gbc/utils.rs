@@ -1,8 +1,8 @@
 
 #[derive(Clone, Copy, Debug)]
 pub enum Flag {
-    On,
     Off,
+    On,
 }
 
 impl Default for Flag {
@@ -20,6 +20,7 @@ impl From<bool> for Flag {
         }
     }
 }
+
 
 impl Flag {
     #[must_use]

@@ -517,17 +517,17 @@ impl PictureProcessingUnit {
                         // Loop over each object and calculate if it should be drawn
                         for object in self.object_attribute_memory.sprites {
                             let sprite_y = i16::from(object.y) - 16;
-                            let sprite_x = object.x - 8;
+                            let sprite_x = i16::from(object.x) - 8;
                             let y_i16 = i16::from(y);
 
                             let mut should_be_drawn = match sprite_size {
                                 SpriteSize::Small => {
                                     (sprite_y..(sprite_y+8)).contains(&y_i16)
-                                        && (sprite_x..(sprite_x+8)).contains(&x)
+                                        && (sprite_x..(sprite_x+8)).contains(&x_i16)
                                 }
                                 SpriteSize::Large => {
                                     (sprite_y..(sprite_y+16)).contains(&y_i16)
-                                        && (sprite_x..(sprite_x+8)).contains(&x)
+                                        && (sprite_x..(sprite_x+8)).contains(&x_i16)
                                 }
                             };
                             should_be_drawn &=
@@ -536,7 +536,7 @@ impl PictureProcessingUnit {
                             if should_be_drawn {
                                 let color_index = match sprite_size {
                                     SpriteSize::Small => {
-                                        let tile_x = x - sprite_x;
+                                        let tile_x = (x_i16 - sprite_x) as u8;
                                         let tile_y = (y_i16 - sprite_y) as u8;
                                         self.get_color_at_pixel_for_sprite(
                                             tile_x,
@@ -547,7 +547,7 @@ impl PictureProcessingUnit {
                                         )
                                     }
                                     SpriteSize::Large => {
-                                        let tile_x = x - sprite_x;
+                                        let tile_x = (x_i16 - sprite_x) as u8;
                                         let tile_y = (y_i16 - sprite_y) as u8;
                                         // The hardware enforces that, for two tile
                                         // sprites, the first sprite has a 0 in the lowest
@@ -577,6 +577,7 @@ impl PictureProcessingUnit {
                                     self.write_to_framebuffer(x as usize, y as usize, color);
                                 }
                             }
+                            self.sprites_this_line += 1;
                         }
                     }
 

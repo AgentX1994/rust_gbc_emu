@@ -157,21 +157,21 @@ impl From<u8> for Control {
 impl From<Control> for u8 {
     fn from(lcd: Control) -> Self {
         let mut x = 0_u8;
-        x |= lcd.bg_window_enable_or_priority as u8;
-        x <<= 1;
-        x |= lcd.sprite_enable as u8;
-        x <<= 1;
-        x |= bool::from(lcd.sprite_size) as u8;
-        x <<= 1;
-        x |= bool::from(lcd.bg_tile_map) as u8;
-        x <<= 1;
-        x |= bool::from(lcd.tile_addressing_mode) as u8;
-        x <<= 1;
-        x |= lcd.window_enable as u8;
+        x |= lcd.enable as u8;
         x <<= 1;
         x |= bool::from(lcd.window_tile_map) as u8;
         x <<= 1;
-        x |= lcd.enable as u8;
+        x |= lcd.window_enable as u8;
+        x <<= 1;
+        x |= bool::from(lcd.tile_addressing_mode) as u8;
+        x <<= 1;
+        x |= bool::from(lcd.bg_tile_map) as u8;
+        x <<= 1;
+        x |= bool::from(lcd.sprite_size) as u8;
+        x <<= 1;
+        x |= lcd.sprite_enable as u8;
+        x <<= 1;
+        x |= lcd.bg_window_enable_or_priority as u8;
         x
     }
 }
@@ -238,8 +238,18 @@ struct Status {
     interrupt_on_oam: Flag,
     interrupt_on_vblank: Flag,
     interrupt_on_hblank: Flag,
-    lyc_compare_type: LycCompareType,
+    ly_equal_lyc: Flag,
     mode: LcdStatusMode,
+}
+
+impl Status {
+    fn update(&mut self, v: u8) {
+        let new_status: Status = v.into();
+        self.interrupt_on_lyc = new_status.interrupt_on_lyc;
+        self.interrupt_on_oam = new_status.interrupt_on_oam;
+        self.interrupt_on_vblank = new_status.interrupt_on_vblank;
+        self.interrupt_on_hblank = new_status.interrupt_on_hblank;
+    }
 }
 
 impl From<u8> for Status {
@@ -249,7 +259,7 @@ impl From<u8> for Status {
             interrupt_on_oam: (((v >> 5) & 1) == 1).into(),
             interrupt_on_vblank: (((v >> 4) & 1) == 1).into(),
             interrupt_on_hblank: (((v >> 3) & 1) == 1).into(),
-            lyc_compare_type: (((v >> 2) & 1) == 1).into(),
+            ly_equal_lyc: (((v >> 2) & 1) == 1).into(),
             mode: (v & 0x3).into(),
         }
     }
@@ -266,7 +276,7 @@ impl From<Status> for u8 {
         x <<= 1;
         x |= status.interrupt_on_hblank as u8;
         x <<= 1;
-        x |= bool::from(status.lyc_compare_type) as u8;
+        x |= status.ly_equal_lyc as u8;
         x <<= 2;
         x |= u8::from(status.mode);
         x
@@ -341,7 +351,7 @@ impl Lcd {
     pub fn write_u8(&mut self, offset: u16, byte: u8) {
         match offset {
             0x0 => self.control = byte.into(),
-            0x1 => self.status = byte.into(),
+            0x1 => self.status.update(byte),
             0x2 => self.scroll_y = byte,
             0x3 => self.scroll_x = byte,
             0x4 => (), // unwritable: self.ly = byte,
@@ -375,6 +385,16 @@ impl Lcd {
         if self.lx > 375 {
             self.ly += 1;
             self.lx = -80;
+
+            if self.status.interrupt_on_vblank.to_bool() && self.ly == 144 {
+                stat_interrupt = true;
+            }
+            self.status.ly_equal_lyc = (self.ly == self.ly_compare).into();
+            // TODO OAM stat interrupt
+            if self.status.interrupt_on_lyc.to_bool() && self.status.ly_equal_lyc.to_bool() {
+                stat_interrupt = true;
+            }
+
             if self.ly == 144 {
                 vblank_interrupt = true;
             } else if self.ly == 154 {
@@ -385,23 +405,19 @@ impl Lcd {
         if self.status.interrupt_on_hblank.to_bool() && self.lx == 160 {
             stat_interrupt = true;
         }
-        if self.status.interrupt_on_vblank.to_bool() && self.ly == 144 {
-            stat_interrupt = true;
-        }
-        // TODO OAM stat interrupt
-        if self.status.interrupt_on_lyc.to_bool() && self.ly == self.ly_compare {
-            stat_interrupt = true;
-        }
 
         // TODO Deal with modes
 
         // only interrupt on rising edge
-        let should_stat_interrupt = self.last_stat_interrupt != stat_interrupt;
+        let should_stat_interrupt = !self.last_stat_interrupt && stat_interrupt;
         self.last_stat_interrupt = stat_interrupt;
 
-        if vblank_interrupt { 
+        if vblank_interrupt {
             if self.dot_clock != 70224 {
-                println!("ERROR: vblank timing incorrect! Took {} dots", self.dot_clock);
+                println!(
+                    "ERROR: vblank timing incorrect! Took {} dots",
+                    self.dot_clock
+                );
             }
             self.dot_clock = 0;
         }
