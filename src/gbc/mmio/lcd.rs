@@ -298,6 +298,8 @@ pub struct Lcd {
     window_y: u8,
     window_x: u8,
     lx: i16,
+    window_was_rendered: bool,
+    window_ly: u8,
     last_stat_interrupt: bool,
     dma_running: bool,
     dma_low_byte: u8,
@@ -320,6 +322,8 @@ impl Default for Lcd {
             window_y: 0,
             window_x: 0,
             lx: -80,
+            window_was_rendered: false,
+            window_ly: 0,
             last_stat_interrupt: true,
             dma_running: false,
             dma_low_byte: 0,
@@ -386,6 +390,11 @@ impl Lcd {
             self.ly += 1;
             self.lx = -80;
 
+            if self.window_was_rendered {
+                self.window_was_rendered = false;
+                self.window_ly += 1;
+            }
+
             if self.status.interrupt_on_vblank.to_bool() && self.ly == 144 {
                 stat_interrupt = true;
             }
@@ -398,6 +407,7 @@ impl Lcd {
             if self.ly == 144 {
                 vblank_interrupt = true;
             } else if self.ly == 154 {
+                self.window_ly = 0;
                 self.ly = 0;
             }
         }
@@ -492,6 +502,15 @@ impl Lcd {
     #[must_use]
     pub fn get_window_tile_map(&self) -> TileMap {
         self.control.window_tile_map
+    }
+
+    #[must_use]
+    pub fn get_window_line(&self) -> u8 {
+        self.window_ly
+    }
+
+    pub fn set_window_was_rendered(&mut self) {
+        self.window_was_rendered = true;
     }
 
     #[must_use]

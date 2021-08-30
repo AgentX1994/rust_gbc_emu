@@ -557,13 +557,10 @@ impl PictureProcessingUnit {
                     let window_tile_map = lcd.get_window_tile_map();
                     let window_enable = lcd.get_window_enable();
 
-                    if bg_window_priority
-                        && window_enable
-                        && x >= window_x
-                        && y >= window_y
-                    {
+                    if bg_window_priority && window_enable && x >= window_x && y >= window_y {
+                        lcd.set_window_was_rendered();
                         let win_pos_x = x - window_x;
-                        let win_pos_y = y - window_y;
+                        let win_pos_y = lcd.get_window_line();
                         let bg_color = self.get_color_at_pixel_using_tilemap(
                             win_pos_x,
                             win_pos_y,
