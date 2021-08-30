@@ -523,6 +523,7 @@ impl PictureProcessingUnit {
 
                 if (0..160).contains(&x_i16) && y < 144 {
                     #[allow(clippy::cast_possible_truncation)]
+                    #[allow(clippy::cast_sign_loss)]
                     let x = x_i16 as u8;
                     let addressing_mode = lcd.get_addressing_mode();
                     let bg_window_priority = lcd.get_background_window_priority();
@@ -577,22 +578,23 @@ impl PictureProcessingUnit {
                     let sprite_size = lcd.get_sprite_size();
                     if objects_enable {
                         // Loop over each object and calculate if it should be drawn
-                        for object in self.sprites_this_line.iter() {
+                        for object in &self.sprites_this_line {
                             let sprite_y = i16::from(object.y) - 16;
                             let sprite_x = i16::from(object.x) - 8;
                             let y_i16 = i16::from(y);
 
-                            let mut should_be_drawn = match sprite_size {
-                                SpriteSize::Small => (sprite_x..(sprite_x + 8)).contains(&x_i16),
-                                SpriteSize::Large => (sprite_x..(sprite_x + 8)).contains(&x_i16),
-                            };
+                            let mut should_be_drawn = (sprite_x..(sprite_x + 8)).contains(&x_i16);
                             should_be_drawn &=
                                 !object.attributes.behind_background || bg_color_index_was_zero;
 
                             if should_be_drawn {
                                 let color_index = match sprite_size {
                                     SpriteSize::Small => {
+                                        #[allow(clippy::cast_possible_truncation)]
+                                        #[allow(clippy::cast_sign_loss)]
                                         let tile_x = (x_i16 - sprite_x) as u8;
+                                        #[allow(clippy::cast_possible_truncation)]
+                                        #[allow(clippy::cast_sign_loss)]
                                         let tile_y = (y_i16 - sprite_y) as u8;
                                         self.get_color_at_pixel_for_sprite(
                                             tile_x,
@@ -603,7 +605,11 @@ impl PictureProcessingUnit {
                                         )
                                     }
                                     SpriteSize::Large => {
+                                        #[allow(clippy::cast_possible_truncation)]
+                                        #[allow(clippy::cast_sign_loss)]
                                         let tile_x = (x_i16 - sprite_x) as u8;
+                                        #[allow(clippy::cast_possible_truncation)]
+                                        #[allow(clippy::cast_sign_loss)]
                                         let tile_y = (y_i16 - sprite_y) as u8;
                                         // The hardware enforces that, for two tile
                                         // sprites, the first sprite has a 0 in the lowest

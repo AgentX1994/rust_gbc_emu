@@ -21,8 +21,8 @@ fn run(
     mut canvas: Canvas<Window>,
     mut event_pump: sdl2::EventPump,
     debugger_running: bool,
-    framebuffer: Arc<Mutex<[[lcd::Color; 160]; 144]>>,
-    gbc_running: Arc<AtomicBool>,
+    framebuffer: &Arc<Mutex<[[lcd::Color; 160]; 144]>>,
+    gbc_running: &Arc<AtomicBool>,
 ) {
     canvas.set_logical_size(160, 144).unwrap();
     canvas.clear();
@@ -33,7 +33,7 @@ fn run(
         .unwrap();
     let format = texture.query().format;
     println!("Texture format: {:?}", format);
-    let frame_duration = Duration::from_nanos(1_000_000_000u64 / 60);
+    let frame_duration = Duration::from_nanos(1_000_000_000_u64 / 60);
     'running: loop {
         for event in event_pump.poll_iter() {
             match event {
@@ -44,7 +44,7 @@ fn run(
                 } => {
                     if debugger_running {
                         if gbc_running.load(Ordering::Relaxed) {
-                            gbc_running.store(false, Ordering::Relaxed)
+                            gbc_running.store(false, Ordering::Relaxed);
                         } else {
                             break 'running;
                         }
@@ -162,6 +162,7 @@ fn main() {
         .expect("Error Loading rom!");
         if debug {
             run_debugger(gbc);
+            #[allow(clippy::cast_possible_truncation)]
             event_sender
                 .push_event(Event::Quit {
                     timestamp: (Instant::now() - start).as_millis() as u32,
@@ -175,19 +176,22 @@ fn main() {
             }
             let runtime = Instant::now() - start;
             let cpu_speed = gbc.get_clock_speed();
+            #[allow(clippy::cast_precision_loss)]
             let actual_clock_speed = cycles as f64 / runtime.as_secs_f64();
+            #[allow(clippy::cast_precision_loss)]
+            let percentage_speed = 100.0 * (actual_clock_speed / cpu_speed as f64);
             println!(
                 "{} cycles in {:.02} - {:>10.02}hz ({:.02}%)",
                 cycles,
                 runtime.as_secs_f64(),
                 actual_clock_speed,
-                100.0 * (actual_clock_speed / cpu_speed as f64)
+                percentage_speed
             );
         }
     });
 
     let event_pump = sdl_context.event_pump().unwrap();
-    run(canvas, event_pump, debug, framebuffer, gbc_running);
+    run(canvas, event_pump, debug, &framebuffer, &gbc_running);
 
     t.join().expect("Error joining");
 }
