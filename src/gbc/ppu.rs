@@ -1,3 +1,5 @@
+use std::collections::BinaryHeap;
+
 use super::mmio::lcd::{Color, Lcd, SpriteSize, TileMap};
 
 #[derive(Copy, Clone, Debug)]
@@ -342,6 +344,26 @@ impl Sprite {
     }
 }
 
+impl PartialEq for Sprite {
+    fn eq(&self, other: &Self) -> bool {
+        self.x == other.x
+    }
+}
+
+impl PartialOrd for Sprite {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        other.x.partial_cmp(&self.x)
+    }
+}
+
+impl Eq for Sprite {}
+
+impl Ord for Sprite {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        other.x.cmp(&self.x)
+    }
+}
+
 #[derive(Debug)]
 pub struct ObjectAttributeMemory {
     sprites: [Sprite; 40],
@@ -375,7 +397,7 @@ pub struct PictureProcessingUnit {
     framebuffer1: [[Color; 160]; 144],
     framebuffer2: [[Color; 160]; 144],
     framebuffer_selector: bool,
-    sprites_this_line: u8,
+    sprites_this_line: BinaryHeap<Sprite>,
 }
 
 impl Default for PictureProcessingUnit {
@@ -387,12 +409,10 @@ impl Default for PictureProcessingUnit {
             framebuffer1: [[Color::White; 160]; 144],
             framebuffer2: [[Color::White; 160]; 144],
             framebuffer_selector: false,
-            sprites_this_line: 0,
+            sprites_this_line: BinaryHeap::new(),
         }
     }
 }
-
-
 
 impl PictureProcessingUnit {
     #[must_use]
@@ -466,6 +486,27 @@ impl PictureProcessingUnit {
         tile.get_color(tile_x, tile_y)
     }
 
+    fn get_sprites_for_line(&mut self, y: u8, sprite_size: SpriteSize) {
+        self.sprites_this_line.clear();
+        for ref object in self.object_attribute_memory.sprites {
+            let sprite_y = i16::from(object.y) - 16;
+            let y_i16 = i16::from(y);
+
+            let should_be_drawn = match sprite_size {
+                SpriteSize::Small => (sprite_y..(sprite_y + 8)).contains(&y_i16),
+                SpriteSize::Large => (sprite_y..(sprite_y + 16)).contains(&y_i16),
+            };
+
+            if should_be_drawn {
+                self.sprites_this_line.push(*object);
+
+                if self.sprites_this_line.len() >= 10 {
+                    break;
+                }
+            }
+        }
+    }
+
     pub fn tick(&mut self, cycles: u64, lcd: &mut Lcd) -> (bool, bool) {
         let mut vblank_interrupt = false;
         let mut stat_interrupt = false;
@@ -474,11 +515,11 @@ impl PictureProcessingUnit {
         if lcd_enable {
             for _ in 0..cycles {
                 let x_i16 = lcd.get_lx();
-                if x_i16 == -80 {
-                    // New line, reset sprites drawn so far
-                    self.sprites_this_line = 0;
-                }
                 let y = lcd.get_ly();
+                if x_i16 == -80 {
+                    // New line, reset sprites drawn so far and get the sprites for this line
+                    self.get_sprites_for_line(y, lcd.get_sprite_size());
+                }
 
                 if (0..160).contains(&x_i16) && y < 144 {
                     #[allow(clippy::cast_possible_truncation)]
@@ -494,7 +535,7 @@ impl PictureProcessingUnit {
                     let palette = lcd.get_background_palette();
 
                     // If this is not true, the background and window should display as white
-                    let bg_color_index_was_zero;
+                    let mut bg_color_index_was_zero;
                     if bg_window_priority {
                         let bg_color = self.get_color_at_pixel_using_tilemap(
                             bg_x,
@@ -510,28 +551,46 @@ impl PictureProcessingUnit {
                         self.write_to_framebuffer(x as usize, y as usize, Color::White);
                     }
 
+                    // draw window
+                    let (mut window_x, window_y) = lcd.get_window_coords();
+                    window_x = window_x.saturating_sub(7);
+                    let window_tile_map = lcd.get_window_tile_map();
+                    let window_enable = lcd.get_window_enable();
+
+                    if bg_window_priority
+                        && window_enable
+                        && x >= window_x
+                        && y >= window_y
+                    {
+                        let win_pos_x = x - window_x;
+                        let win_pos_y = y - window_y;
+                        let bg_color = self.get_color_at_pixel_using_tilemap(
+                            win_pos_x,
+                            win_pos_y,
+                            window_tile_map,
+                            addressing_mode,
+                        );
+                        let color = palette.get_color(&bg_color);
+                        self.write_to_framebuffer(x as usize, y as usize, color);
+                        bg_color_index_was_zero = matches!(bg_color, ColorIndex::Color0);
+                    }
+
                     // draw objects
                     let objects_enable = lcd.get_sprite_enable();
                     let sprite_size = lcd.get_sprite_size();
-                    if self.sprites_this_line < 10 && objects_enable {
+                    if objects_enable {
                         // Loop over each object and calculate if it should be drawn
-                        for object in self.object_attribute_memory.sprites {
+                        for object in self.sprites_this_line.iter() {
                             let sprite_y = i16::from(object.y) - 16;
                             let sprite_x = i16::from(object.x) - 8;
                             let y_i16 = i16::from(y);
 
                             let mut should_be_drawn = match sprite_size {
-                                SpriteSize::Small => {
-                                    (sprite_y..(sprite_y+8)).contains(&y_i16)
-                                        && (sprite_x..(sprite_x+8)).contains(&x_i16)
-                                }
-                                SpriteSize::Large => {
-                                    (sprite_y..(sprite_y+16)).contains(&y_i16)
-                                        && (sprite_x..(sprite_x+8)).contains(&x_i16)
-                                }
+                                SpriteSize::Small => (sprite_x..(sprite_x + 8)).contains(&x_i16),
+                                SpriteSize::Large => (sprite_x..(sprite_x + 8)).contains(&x_i16),
                             };
                             should_be_drawn &=
-                                !(object.attributes.behind_background && bg_color_index_was_zero);
+                                !object.attributes.behind_background || bg_color_index_was_zero;
 
                             if should_be_drawn {
                                 let color_index = match sprite_size {
@@ -552,10 +611,15 @@ impl PictureProcessingUnit {
                                         // The hardware enforces that, for two tile
                                         // sprites, the first sprite has a 0 in the lowest
                                         // bit, and the second sprite has a 1
-                                        let tile_index = if tile_y > 7 {
+                                        let temp_tile_index = if tile_y > 7 {
                                             object.tile_number | 0x1
                                         } else {
                                             object.tile_number & !0x1
+                                        };
+                                        let tile_index = if object.attributes.flip_y {
+                                            temp_tile_index ^ 0x1
+                                        } else {
+                                            temp_tile_index
                                         };
                                         self.get_color_at_pixel_for_sprite(
                                             tile_x,
@@ -575,30 +639,10 @@ impl PictureProcessingUnit {
                                     };
                                     let color = palette.get_color(&color_index);
                                     self.write_to_framebuffer(x as usize, y as usize, color);
+                                    break;
                                 }
                             }
-                            self.sprites_this_line += 1;
                         }
-                    }
-
-                    // draw window
-                    let (window_x, window_y) = lcd.get_window_coords();
-                    let window_tile_map = lcd.get_window_tile_map();
-                    let window_enable = lcd.get_window_enable();
-
-                    if bg_window_priority
-                        && window_enable
-                        && x >= (window_x.saturating_sub(7))
-                        && y >= window_y
-                    {
-                        let bg_color = self.get_color_at_pixel_using_tilemap(
-                            x,
-                            y,
-                            window_tile_map,
-                            addressing_mode,
-                        );
-                        let color = palette.get_color(&bg_color);
-                        self.write_to_framebuffer(x as usize, y as usize, color);
                     }
                 }
 

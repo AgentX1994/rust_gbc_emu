@@ -111,9 +111,9 @@ pub enum SpriteSize {
 impl From<bool> for SpriteSize {
     fn from(v: bool) -> Self {
         if v {
-            Self::Small
-        } else {
             Self::Large
+        } else {
+            Self::Small
         }
     }
 }
