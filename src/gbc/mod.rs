@@ -18,6 +18,7 @@ use memory_bus::MemoryBus;
 use mmio::lcd::Color;
 
 use self::cpu::InterruptRequest;
+use self::ppu::{Tile, TileAddressingMethod};
 
 #[derive(Debug)]
 pub struct Gbc {
@@ -245,10 +246,22 @@ impl Gbc {
     }
 
     #[must_use]
-    pub fn reset(mut self) -> Self {
+    pub fn get_tile_map(&self, map_number: u8) -> Option<&[u8]> {
+        match map_number {
+            0 => Some(&self.memory_bus.ppu.video_ram.background_map_0[..]),
+            1 => Some(&self.memory_bus.ppu.video_ram.background_map_1[..]),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn get_tile(&self, tile_address: TileAddressingMethod) -> Tile {
+        self.memory_bus.ppu.video_ram.read_tile(tile_address)
+    }
+
+    pub fn reset(&mut self) {
         self.cycle_count = 0;
         self.cpu.reset();
-        self.memory_bus = self.memory_bus.reset();
-        self
+        self.memory_bus.reset();
     }
 }

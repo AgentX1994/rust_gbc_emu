@@ -105,9 +105,9 @@ impl MemoryBus {
         }
     }
 
-    #[must_use]
-    pub fn reset(self) -> Self {
-        Self::new(self.cartridge)
+    pub fn reset(&mut self) {
+        let c = std::mem::take(&mut self.cartridge);
+        *self = Self::new(c);
     }
 
     pub fn add_breakpoint(&mut self, bp: Breakpoint) {

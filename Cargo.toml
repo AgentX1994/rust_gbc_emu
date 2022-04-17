@@ -8,8 +8,7 @@ edition = "2018"
 [dependencies]
 rustyline = "8.2.0"
 clap = "2.33.0"
-#ctrlc = "3.1.0"
-#sdl2 = "0.34.5"
+parse_int = {features = ["implicit-octal"], version = "0.5.0"}
 
 [dependencies.sdl2]
 version = "0.34.5"

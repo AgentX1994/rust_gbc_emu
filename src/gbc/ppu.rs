@@ -29,6 +29,17 @@ impl Default for ColorIndex {
     }
 }
 
+impl From<ColorIndex> for u8 {
+    fn from(c: ColorIndex) -> Self {
+        match c {
+            ColorIndex::Color0 => 0,
+            ColorIndex::Color1 => 1,
+            ColorIndex::Color2 => 2,
+            ColorIndex::Color3 => 3,
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Tile {
     lines: [u8; 16],
@@ -52,9 +63,9 @@ impl Tile {
     #[must_use]
     pub fn deinterleave(&self) -> [ColorIndex; 64] {
         let mut colors = [ColorIndex::default(); 64];
-        for i in (0..16).step_by(2) {
-            let mut byte0 = self.lines[i];
-            let mut byte1 = self.lines[i + 1];
+        for i in 0..8 {
+            let mut byte0 = self.lines[i*2];
+            let mut byte1 = self.lines[i*2 + 1];
 
             colors[i * 8] = ColorIndex::new(((byte1 & 1) << 1) | (byte0 & 1));
             byte0 >>= 1;
@@ -127,11 +138,11 @@ impl From<TileAddressingMethod> for bool {
 
 #[derive(Debug)]
 pub struct VideoRam {
-    tile_block_0: [Tile; 128],
-    tile_block_1: [Tile; 128],
-    tile_block_2: [Tile; 128],
-    background_map_0: [u8; 32 * 32],
-    background_map_1: [u8; 32 * 32],
+    pub tile_block_0: [Tile; 128],
+    pub tile_block_1: [Tile; 128],
+    pub tile_block_2: [Tile; 128],
+    pub background_map_0: [u8; 32 * 32],
+    pub background_map_1: [u8; 32 * 32],
 }
 
 impl Default for VideoRam {
@@ -392,8 +403,8 @@ impl ObjectAttributeMemory {
 #[derive(Debug)]
 pub struct PictureProcessingUnit {
     in_use_by_lcd: bool,
-    video_ram: VideoRam,
-    object_attribute_memory: ObjectAttributeMemory,
+    pub video_ram: VideoRam,
+    pub object_attribute_memory: ObjectAttributeMemory,
     framebuffer1: [[Color; 160]; 144],
     framebuffer2: [[Color; 160]; 144],
     framebuffer_selector: bool,
