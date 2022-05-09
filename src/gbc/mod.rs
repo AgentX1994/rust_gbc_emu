@@ -20,6 +20,18 @@ use mmio::lcd::Color;
 use self::cpu::InterruptRequest;
 use self::ppu::{Tile, TileAddressingMethod};
 
+#[derive(Debug, Default)]
+pub struct InputState{
+    pub up_pressed: bool,
+    pub down_pressed: bool,
+    pub left_pressed: bool,
+    pub right_pressed: bool,
+    pub start_pressed: bool,
+    pub select_pressed: bool,
+    pub a_pressed: bool,
+    pub b_pressed: bool,
+}
+
 #[derive(Debug)]
 pub struct Gbc {
     running: Arc<AtomicBool>,
@@ -31,6 +43,7 @@ pub struct Gbc {
     breakpoints: Vec<Breakpoint>,
     break_reason: Option<Breakpoint>,
     memory_bus: MemoryBus,
+    input_state: Arc<Mutex<InputState>>,
 }
 
 impl Gbc {
@@ -40,6 +53,7 @@ impl Gbc {
         running: Arc<AtomicBool>,
         turbo: bool,
         show_instructions: bool,
+        input_state: Arc<Mutex<InputState>>,
     ) -> io::Result<Self> {
         let cartridge = Cartridge::new(rom_path)?;
         Ok(Gbc {
@@ -52,6 +66,7 @@ impl Gbc {
             breakpoints: Vec::new(),
             break_reason: None,
             memory_bus: MemoryBus::new(cartridge),
+            input_state,
         })
     }
 
@@ -137,6 +152,12 @@ impl Gbc {
             };
             self.cycle_count += cycles;
             cycles_in_this_run += cycles;
+
+            {
+                let input_state = self.input_state.lock().unwrap();
+                self.memory_bus.joypad.set_input_state(&*input_state);
+            }
+
             self.check_breakpoints();
             let desired_iteration_time =
                 Duration::from_nanos(cycles * (1_000_000_000_u64 / self.clock_speed));

@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use rust_gbc_emu::{
     debugger::Debugger,
-    gbc::{mmio::lcd, Gbc},
+    gbc::{mmio::lcd, Gbc, InputState},
 };
 
 fn run_debugger(gbc: Gbc) {
@@ -23,6 +23,7 @@ fn run(
     debugger_running: bool,
     framebuffer: &Arc<Mutex<[[lcd::Color; 160]; 144]>>,
     gbc_running: &Arc<AtomicBool>,
+    input_state: &Arc<Mutex<InputState>>
 ) {
     canvas.set_logical_size(160, 144).unwrap();
     canvas.clear();
@@ -51,6 +52,32 @@ fn run(
                     } else {
                         gbc_running.store(false, Ordering::Relaxed);
                         break 'running;
+                    }
+                }
+                Event::KeyDown { keycode: Some(key), .. } => {
+                    match key {
+                        Keycode::Up => input_state.lock().unwrap().up_pressed = true,
+                        Keycode::Down => input_state.lock().unwrap().down_pressed = true,
+                        Keycode::Left => input_state.lock().unwrap().left_pressed = true,
+                        Keycode::Right => input_state.lock().unwrap().right_pressed = true,
+                        Keycode::Z => input_state.lock().unwrap().a_pressed = true,
+                        Keycode::X => input_state.lock().unwrap().b_pressed = true,
+                        Keycode::A => input_state.lock().unwrap().select_pressed = true,
+                        Keycode::S => input_state.lock().unwrap().start_pressed = true,
+                        _ => (),
+                    }
+                }
+                Event::KeyUp { keycode: Some(key), .. } => {
+                    match key {
+                        Keycode::Up => input_state.lock().unwrap().up_pressed = false,
+                        Keycode::Down => input_state.lock().unwrap().down_pressed = false,
+                        Keycode::Left => input_state.lock().unwrap().left_pressed = false,
+                        Keycode::Right => input_state.lock().unwrap().right_pressed = false,
+                        Keycode::Z => input_state.lock().unwrap().a_pressed = false,
+                        Keycode::X => input_state.lock().unwrap().b_pressed = false,
+                        Keycode::A => input_state.lock().unwrap().select_pressed = false,
+                        Keycode::S => input_state.lock().unwrap().start_pressed = false,
+                        _ => (),
                     }
                 }
                 _ => {}
@@ -134,6 +161,7 @@ fn main() {
 
     let gbc_running = Arc::new(AtomicBool::new(false));
     let framebuffer = Arc::new(Mutex::new([[lcd::Color::White; 160]; 144]));
+    let input_state = Arc::new(Mutex::new(InputState::default()));
 
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
@@ -151,6 +179,7 @@ fn main() {
 
     let gbc_running_gbc = gbc_running.clone();
     let framebuffer_gbc = framebuffer.clone();
+    let input_state_gbc = input_state.clone();
     let t = thread::spawn(move || {
         let mut gbc = Gbc::new(
             rom,
@@ -158,6 +187,7 @@ fn main() {
             gbc_running_gbc,
             turbo,
             show_instructions,
+            input_state_gbc
         )
         .expect("Error Loading rom!");
         if debug {
@@ -191,7 +221,7 @@ fn main() {
     });
 
     let event_pump = sdl_context.event_pump().unwrap();
-    run(canvas, event_pump, debug, &framebuffer, &gbc_running);
+    run(canvas, event_pump, debug, &framebuffer, &gbc_running, &input_state);
 
     t.join().expect("Error joining");
 }
